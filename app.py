@@ -10,7 +10,7 @@ import streamlit as st
 st.set_page_config(page_title="전기사용량 50 미만 세대 추출기", layout="wide")
 
 st.title("⚡ 전기사용량 50 미만 세대 자동 추출 시스템")
-st.markdown("한일베라체, 연동드림아이 전용 파서 및 전월/지침 데이터 혼동을 방지하는 정밀 분할형 표 탐지 구조를 제공합니다.")
+st.markdown("한일베라체, 연동드림아이, 힐튼 등 다양한 아파트 전기 검침표 양식을 완벽 지원합니다.")
 
 def clean_num(val):
     if val is None or val == '' or val == '-':
@@ -24,11 +24,13 @@ def clean_num(val):
     return None
 
 def is_valid_ho(ho_str):
-    if not ho_str:
+    if ho_str is None:
         return False
     s = str(ho_str).strip().replace('.0', '')
-    EXCLUDE_KEYWORDS = {'합계', '소계', '합  계', '전월', '당월', '구분', '호', '동', '청구월', 'None', '', '평균', '차액', 'NO', '시작지침', '종료지침', '동계', '하계', '난방', '온수', '총계', '계'}
-    if s in EXCLUDE_KEYWORDS or any(k in s for k in EXCLUDE_KEYWORDS):
+    
+    # 명확하게 호수가 아닌 키워드만 정확히 일치할 때 제외
+    EXCLUDE_EXACT = {'합계', '소계', '합  계', '전월', '당월', '구분', '호', '동', '청구월', 'None', '', '평균', '차액', 'NO', '시작지침', '종료지침', '동계', '하계', '난방', '온수', '총계', '계', '호실'}
+    if s in EXCLUDE_EXACT:
         return False
     
     clean_digits = re.sub(r'[^0-9]', '', s)
@@ -36,7 +38,7 @@ def is_valid_ho(ho_str):
         return False
     
     val_num = int(clean_digits)
-    # 지나치게 큰 숫자는 전월 지침이나 관리 코드이므로 호수에서 제외 (예: 5000 초과 값 방어)
+    # 5000 초과 값은 지침(계기 숫자)이므로 호수에서 제외
     if val_num > 5000 or val_num == 0:
         return False
         
@@ -118,8 +120,6 @@ def finalize_dataframe(df):
 @st.cache_data(show_spinner=False)
 def parse_excel_universal_sorted(file_bytes, filename):
     wb = load_any_excel_to_openpyxl(file_bytes, filename)
-    EXCLUDE_KEYWORDS = {'합계', '소계', '합  계', '전월', '당월', '구분', '호', '동', '청구월', 'None', '', '평균', '차액', 'NO', '시작지침', '종료지침', '동계', '하계', '난방', '온수'}
-
     if not wb or not wb.sheetnames:
         return pd.DataFrame()
 
@@ -211,7 +211,32 @@ def parse_excel_universal_sorted(file_bytes, filename):
             return finalize_dataframe(pd.DataFrame(sheet_records))
 
     # ==========================================
-    # [3] 기타 나머지 파일들: 범용 키워드 탐색 + 세로형/분할형(힐튼 등) 구조 탐색
+    # [3] 힐튼 등 가로 블록 반복형 구조 파서 (4열 단위: 구분, 전월, 당월, 사용량)
+    # ==========================================
+    for header_row in range(1, max_r + 1):
+        for c_start in range(1, max_c + 1, 4):
+            val = ws.cell(row=header_row, column=c_start).value
+            if val is not None and str(val).strip() == '구분':
+                # 데이터는 헤더 행 바로 다음 또는 다다음 행부터 시작
+                for r in range(header_row + 1, max_r + 1):
+                    ho_cell = ws.cell(row=r, column=c_start).value
+                    use_cell = ws.cell(row=r, column=c_start + 3).value # 4번째 열이 사용량
+                    if ho_cell is not None and use_cell is not None:
+                        str_ho = str(ho_cell).strip().replace('.0', '').replace('호', '')
+                        if not is_valid_ho(str_ho):
+                            continue
+                        use_num = clean_num(use_cell)
+                        if use_num is not None:
+                            sheet_records.append({
+                                '동': '',
+                                '구분/호수': str_ho,
+                                '사용량(kWh)': use_num
+                            })
+    if sheet_records:
+        return finalize_dataframe(pd.DataFrame(sheet_records))
+
+    # ==========================================
+    # [4] 일반적인 단일 표 구조 파서
     # ==========================================
     header_texts = {}
     for c in range(1, max_c + 1):
@@ -229,41 +254,11 @@ def parse_excel_universal_sorted(file_bytes, filename):
         h_clean = h_text.replace(" ", "")
         if '동' in h_clean and not any(k in h_clean for k in ['동계', '하계', '부하', '사용량', '지역', '지침', '전월']):
             dong_cols.append(c)
-        # 헤더 명칭에 '전월'이나 '시작지침', '종료지침'이 포함된 컬럼은 호수(호실) 컬럼에서 확실히 제외
         if any(k in h_clean for k in ['호실', '호수', '세대', '구분', '호(구분)']) and not any(k in h_clean for k in ['사용량', '전월', '지침']):
             ho_cols.append(c)
         if any(k in h_clean for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량', '전기사용량']) and not any(k in h_clean for k in ['전월사용', '전월지침', '시작지침']):
             use_cols.append(c)
 
-    # A. 세로형 / 분할형 표 구조 탐지 (예: 여러 개의 호실/사용량 쌍이 가로 블록 단위로 나뉘어 있는 경우)
-    if len(ho_cols) >= 2 or len(use_cols) >= 2:
-        for h_c in ho_cols:
-            # 해당 호실 컬럼의 헤더가 '전월' 관련 내용을 포함하는지 최종 확인 후 스킵
-            h_header_text = header_texts.get(h_c, '').replace(" ", "")
-            if '전월' in h_header_text or '지침' in h_header_text:
-                continue
-
-            valid_u_cols = [u for u in use_cols if u >= h_c and u <= h_c + 3]
-            u_c = valid_u_cols[0] if valid_u_cols else (use_cols[0] if use_cols else h_c + 1)
-            
-            for r in range(1, max_r + 1):
-                raw_ho = ws.cell(r, h_c).value
-                raw_use = ws.cell(r, u_c).value
-                if raw_ho is not None and raw_use is not None:
-                    str_ho = str(raw_ho).strip()
-                    if not is_valid_ho(str_ho):
-                        continue
-                    use_num = clean_num(raw_use)
-                    if use_num is not None:
-                        sheet_records.append({
-                            '동': '',
-                            '구분/호수': str_ho.replace('.0', '').replace('호', ''),
-                            '사용량(kWh)': use_num
-                        })
-        if sheet_records:
-            return finalize_dataframe(pd.DataFrame(sheet_records))
-
-    # B. 일반적인 단일 표 구조 탐색
     has_dong_col = len(dong_cols) > 0
     d_col = dong_cols[0] if has_dong_col else None
     h_col = ho_cols[0] if ho_cols else (2 if has_dong_col else 1)
