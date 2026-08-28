@@ -10,7 +10,7 @@ import streamlit as st
 st.set_page_config(page_title="전기사용량 50 미만 세대 추출기", layout="wide")
 
 st.title("⚡ 전기사용량 50 미만 세대 자동 추출 시스템")
-st.markdown("다중 시트 파일 및 표준 관리비 엑셀 양식(`동`, `호`, `전기사용량`)을 완벽하게 지원합니다.")
+st.markdown("한일베라체, 연동드림아이 전용 파서 및 세로형·분할형 표를 지원하는 범용 키워드 탐색 구조를 제공합니다.")
 
 def clean_num(val):
     if val is None or val == '' or val == '-':
@@ -98,36 +98,6 @@ def finalize_dataframe(df):
 
 @st.cache_data(show_spinner=False)
 def parse_excel_universal_sorted(file_bytes, filename):
-    # pandas로 먼저 읽어보고 표준 컬럼(동, 호, 전기사용량)이 있는지 확인
-    try:
-        df_pd = pd.read_excel(io.BytesIO(file_bytes))
-        df_pd.columns = [str(c).strip() for c in df_pd.columns]
-        if '호' in df_pd.columns and any(c in df_pd.columns for c in ['전기사용량', '사용량(kWh)', '전기사용량(kWh)']):
-            usage_col = '전기사용량' if '전기사용량' in df_pd.columns else [c for c in df_pd.columns if '사용량' in c][0]
-            
-            # 합계 행 제외
-            df_pd = df_pd[~df_pd['호'].astype(str).str.contains('합계|소계|전체', na=False)]
-            if '동' in df_pd.columns:
-                df_pd = df_pd[~df_pd['동'].astype(str).str.contains('합계|소계|전체', na=False)]
-
-            records = []
-            for _, row in df_pd.iterrows():
-                dong_val = str(row['동']) if '동' in df_pd.columns and pd.notna(row['동']) else ''
-                ho_val = str(row['호']) if pd.notna(row['호']) else ''
-                use_val = clean_num(row[usage_col])
-                
-                if ho_val and use_val is not None:
-                    records.append({
-                        '동': dong_val.replace('.0', '').replace('동', '').strip(),
-                        '구분/호수': ho_val.replace('.0', '').replace('호', '').strip(),
-                        '사용량(kWh)': use_val
-                    })
-            if records:
-                return finalize_dataframe(pd.DataFrame(records))
-    except Exception:
-        pass
-
-    # 기존 다중 시트/복잡 양식 대응 로직
     wb = load_any_excel_to_openpyxl(file_bytes, filename)
     EXCLUDE_KEYWORDS = {'합계', '소계', '합  계', '전월', '당월', '구분', '호', '동', '청구월', 'None', '', '평균', '차액', 'NO', '시작지침', '종료지침', '동계', '하계', '난방', '온수'}
 
@@ -167,6 +137,63 @@ def parse_excel_universal_sorted(file_bytes, filename):
 
     sheet_records = []
 
+    # ==========================================
+    # [1] 연동드림아이 전용 파서
+    # ==========================================
+    is_yeonmok_format = False
+    for r in range(1, min(5, max_r + 1)):
+        row_str = " ".join([str(ws.cell(r, c).value or '') for c in range(1, min(5, max_c + 1))])
+        if '검침표' in row_str or '연동드림아이' in row_str:
+            is_yeonmok_format = True
+            break
+
+    if is_yeonmok_format or ('검침표' in filename or '연동드림아이' in filename):
+        for r in range(1, max_r + 1):
+            ho_val = ws.cell(r, 1).value
+            use_val = ws.cell(r, 4).value
+            if ho_val is not None and use_val is not None:
+                str_ho = str(ho_val).strip()
+                if str_ho in EXCLUDE_KEYWORDS or any(k in str_ho for k in ['합계', '소계', '호수', '검침표']):
+                    continue
+                use_num = clean_num(use_val)
+                if use_num is not None:
+                    sheet_records.append({
+                        '동': '',
+                        '구분/호수': str_ho.replace('호', ''),
+                        '사용량(kWh)': use_num
+                    })
+        if sheet_records:
+            return finalize_dataframe(pd.DataFrame(sheet_records))
+
+    # ==========================================
+    # [2] 한일베라체 전용 파서
+    # ==========================================
+    if '한일베라체' in filename or '한일' in filename:
+        for r in range(5, max_r + 1):
+            dong_val = ws.cell(r, 2).value
+            ho_val = ws.cell(r, 3).value
+            use_val = ws.cell(r, 7).value
+            if use_val is None and max_c >= 8:
+                use_val = ws.cell(r, 8).value
+
+            if dong_val is not None and ho_val is not None and use_val is not None:
+                str_dong = str(int(float(dong_val))) if str(dong_val).replace('.','',1).isdigit() else str(dong_val).strip()
+                str_ho = str(int(float(ho_val))) if str(ho_val).replace('.','',1).isdigit() else str(ho_val).strip()
+                if str_ho in EXCLUDE_KEYWORDS or any(k in str_ho for k in ['동계', '하계', '합계', '소계', '난방', '온수']):
+                    continue
+                use_num = clean_num(use_val)
+                if use_num is not None:
+                    sheet_records.append({
+                        '동': str_dong.replace('동', ''),
+                        '구분/호수': str_ho.replace('호', ''),
+                        '사용량(kWh)': use_num
+                    })
+        if sheet_records:
+            return finalize_dataframe(pd.DataFrame(sheet_records))
+
+    # ==========================================
+    # [3] 기타 나머지 파일들: 범용 키워드 탐색 + 세로형/분할형(힐튼 등) 구조 탐색
+    # ==========================================
     header_texts = {}
     for c in range(1, max_c + 1):
         col_text_list = []
@@ -188,6 +215,32 @@ def parse_excel_universal_sorted(file_bytes, filename):
         if any(k in h_clean for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량', '전기사용량']) and '지침' not in h_clean:
             use_cols.append(c)
 
+    # A. 세로형 / 분할형 표 구조 탐지 (예: 여러 개의 호실/사용량 쌍이 가로 블록 단위로 나뉘어 있는 경우)
+    if len(ho_cols) >= 2 or len(use_cols) >= 2:
+        # 각 호실 컬럼과 대응되는 사용량 컬럼을 짝지어 탐색
+        for h_c in ho_cols:
+            # 해당 호실 컬럼과 가장 가까운 우측의 사용량 컬럼 매칭
+            valid_u_cols = [u for u in use_cols if u >= h_c and u <= h_c + 3]
+            u_c = valid_u_cols[0] if valid_u_cols else (use_cols[0] if use_cols else h_c + 1)
+            
+            for r in range(1, max_r + 1):
+                raw_ho = ws.cell(r, h_c).value
+                raw_use = ws.cell(r, u_c).value
+                if raw_ho is not None and raw_use is not None:
+                    str_ho = str(raw_ho).strip()
+                    if str_ho in EXCLUDE_KEYWORDS or any(k in str_ho for k in ['합계', '소계', '구분', '호실', '호수', '동계', '하계', '난방', '온수']):
+                        continue
+                    use_num = clean_num(raw_use)
+                    if use_num is not None:
+                        sheet_records.append({
+                            '동': '',
+                            '구분/호수': str_ho.replace('.0', '').replace('호', ''),
+                            '사용량(kWh)': use_num
+                        })
+        if sheet_records:
+            return finalize_dataframe(pd.DataFrame(sheet_records))
+
+    # B. 일반적인 단일 표 구조 탐색
     has_dong_col = len(dong_cols) > 0
     d_col = dong_cols[0] if has_dong_col else None
     h_col = ho_cols[0] if ho_cols else (2 if has_dong_col else 1)
@@ -266,7 +319,7 @@ if uploaded_files:
     for i, (file_name, df_under_50) in enumerate(results.items()):
         with tabs[i]:
             detected_s = selected_sheets_info.get(file_name, '기본 시트')
-            st.info(f"📌 **자동 선택된 분석 시트**: `{detected_s}`")
+            st.info(f"📌 **자동 선택된 분석 시트 (최근 월)**: `{detected_s}`")
             st.metric("⚠️ 50 미만 세대수", f"{len(df_under_50)} 건")
             if not df_under_50.empty:
                 st.dataframe(df_under_50, use_container_width=True)
