@@ -232,7 +232,7 @@ def parse_excel_universal_sorted(file_bytes, filename):
             dong_cols.append(c)
         if any(k in h_clean for k in ['호실', '호수', '세대', '구분', '호(구분)']) and '사용량' not in h_clean:
             ho_cols.append(c)
-        if any(k in h_clean for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량']) and '지침' not in h_clean:
+        if any(k in h_clean for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량', '전기사용량']) and '지침' not in h_clean:
             use_cols.append(c)
 
     has_dong_col = len(dong_cols) > 0
