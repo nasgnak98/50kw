@@ -211,28 +211,36 @@ def parse_excel_universal_sorted(file_bytes, filename):
     # ==========================================
     # [3] 좌우 병렬 반복형 구조 파서 (예: 동, 호, 사용량 블록이 나란히 배치된 경우)
     # ==========================================
-    for c_start in range(1, max_c + 1, 3):
-        h1 = ws.cell(row=1, column=c_start).value
-        h2 = ws.cell(row=1, column=c_start + 1).value
-        h3 = ws.cell(row=1, column=c_start + 2).value
-        if h1 is not None and h2 is not None and h3 is not None:
-            h_str = f"{h1} {h2} {h3}".replace(" ", "")
-            if '동' in h_str and '호' in h_str and '사용량' in h_str:
-                for r in range(2, max_r + 1):
-                    d_val = ws.cell(row=r, column=c_start).value
-                    h_val = ws.cell(row=r, column=c_start + 1).value
-                    u_val = ws.cell(row=r, column=c_start + 2).value
-                    if d_val is not None and h_val is not None and u_val is not None:
-                        str_d = str(d_val).strip().replace('.0', '').replace('동', '')
-                        str_h = str(h_val).strip().replace('.0', '').replace('호', '')
-                        if is_valid_ho(str_h):
-                            u_num = clean_num(u_val)
-                            if u_num is not None:
-                                sheet_records.append({
-                                    '동': str_d,
-                                    '구분/호수': str_h,
-                                    '사용량(kWh)': u_num
-                                })
+    for c in range(1, max_c + 1):
+        h_val = ws.cell(row=1, column=c).value
+        if h_val is not None and ('동' in str(h_val)):
+            # 동, 호, 사용량 열이 나란히 있는 블록인지 확인
+            d_col = c
+            h_col = c + 1
+            u_col = c + 2
+            
+            if u_col <= max_c:
+                h_name = str(ws.cell(row=1, column=h_col).value or '')
+                u_name = str(ws.cell(row=1, column=u_col).value or '')
+                
+                if '호' in h_name and '사용량' in u_name:
+                    for r in range(2, max_r + 1):
+                        d_val = ws.cell(row=r, column=d_col).value
+                        h_val_cell = ws.cell(row=r, column=h_col).value
+                        u_val_cell = ws.cell(row=r, column=u_col).value
+                        
+                        if d_val is not None and h_val_cell is not None and u_val_cell is not None:
+                            str_d = str(d_val).strip().replace('.0', '').replace('동', '')
+                            str_h = str(h_val_cell).strip().replace('.0', '').replace('호', '')
+                            
+                            if is_valid_ho(str_h):
+                                u_num = clean_num(u_val_cell)
+                                if u_num is not None:
+                                    sheet_records.append({
+                                        '동': str_d,
+                                        '구분/호수': str_h,
+                                        '사용량(kWh)': u_num
+                                    })
     if sheet_records:
         return finalize_dataframe(pd.DataFrame(sheet_records))
 
