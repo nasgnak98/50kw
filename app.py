@@ -10,7 +10,7 @@ import streamlit as st
 st.set_page_config(page_title="전기사용량 50 미만 세대 추출기", layout="wide")
 
 st.title("⚡ 전기사용량 50 미만 세대 자동 추출 시스템")
-st.markdown("한일베라체, 연동드림아이, 힐튼 등 다양한 아파트 전기 검침표 양식을 완벽 지원합니다.")
+st.markdown("한일베라체, 연동드림아이, 힐튼 및 좌우 병렬형 검침표 양식을 완벽 지원합니다.")
 
 def clean_num(val):
     if val is None or val == '' or val == '-':
@@ -28,8 +28,7 @@ def is_valid_ho(ho_str):
         return False
     s = str(ho_str).strip().replace('.0', '')
     
-    # 명확하게 호수가 아닌 키워드만 정확히 일치할 때 제외
-    EXCLUDE_EXACT = {'합계', '소계', '합  계', '전월', '당월', '구분', '호', '동', '청구월', 'None', '', '평균', '차액', 'NO', '시작지침', '종료지침', '동계', '하계', '난방', '온수', '총계', '계', '호실'}
+    EXCLUDE_EXACT = {'합계', '소계', '합  계', '전월', '당월', '구분', '호', '동', '청구월', 'None', '', '평균', '차액', 'NO', '시작지침', '종료지침', '동계', '하계', '난방', '온수', '총계', '계', '호실', '사용량'}
     if s in EXCLUDE_EXACT:
         return False
     
@@ -38,7 +37,6 @@ def is_valid_ho(ho_str):
         return False
     
     val_num = int(clean_digits)
-    # 5000 초과 값은 지침(계기 숫자)이므로 호수에서 제외
     if val_num > 5000 or val_num == 0:
         return False
         
@@ -211,16 +209,43 @@ def parse_excel_universal_sorted(file_bytes, filename):
             return finalize_dataframe(pd.DataFrame(sheet_records))
 
     # ==========================================
-    # [3] 힐튼 등 가로 블록 반복형 구조 파서 (4열 단위: 구분, 전월, 당월, 사용량)
+    # [3] 좌우 병렬 반복형 구조 파서 (예: 동, 호, 사용량 블록이 나란히 배치된 경우)
+    # ==========================================
+    for c_start in range(1, max_c + 1, 3):
+        h1 = ws.cell(row=1, column=c_start).value
+        h2 = ws.cell(row=1, column=c_start + 1).value
+        h3 = ws.cell(row=1, column=c_start + 2).value
+        if h1 is not None and h2 is not None and h3 is not None:
+            h_str = f"{h1} {h2} {h3}".replace(" ", "")
+            if '동' in h_str and '호' in h_str and '사용량' in h_str:
+                for r in range(2, max_r + 1):
+                    d_val = ws.cell(row=r, column=c_start).value
+                    h_val = ws.cell(row=r, column=c_start + 1).value
+                    u_val = ws.cell(row=r, column=c_start + 2).value
+                    if d_val is not None and h_val is not None and u_val is not None:
+                        str_d = str(d_val).strip().replace('.0', '').replace('동', '')
+                        str_h = str(h_val).strip().replace('.0', '').replace('호', '')
+                        if is_valid_ho(str_h):
+                            u_num = clean_num(u_val)
+                            if u_num is not None:
+                                sheet_records.append({
+                                    '동': str_d,
+                                    '구분/호수': str_h,
+                                    '사용량(kWh)': u_num
+                                })
+    if sheet_records:
+        return finalize_dataframe(pd.DataFrame(sheet_records))
+
+    # ==========================================
+    # [4] 힐튼 등 가로 블록 반복형 구조 파서 (4열 단위: 구분, 전월, 당월, 사용량)
     # ==========================================
     for header_row in range(1, max_r + 1):
         for c_start in range(1, max_c + 1, 4):
             val = ws.cell(row=header_row, column=c_start).value
             if val is not None and str(val).strip() == '구분':
-                # 데이터는 헤더 행 바로 다음 또는 다다음 행부터 시작
                 for r in range(header_row + 1, max_r + 1):
                     ho_cell = ws.cell(row=r, column=c_start).value
-                    use_cell = ws.cell(row=r, column=c_start + 3).value # 4번째 열이 사용량
+                    use_cell = ws.cell(row=r, column=c_start + 3).value
                     if ho_cell is not None and use_cell is not None:
                         str_ho = str(ho_cell).strip().replace('.0', '').replace('호', '')
                         if not is_valid_ho(str_ho):
@@ -236,7 +261,7 @@ def parse_excel_universal_sorted(file_bytes, filename):
         return finalize_dataframe(pd.DataFrame(sheet_records))
 
     # ==========================================
-    # [4] 일반적인 단일 표 구조 파서
+    # [5] 일반적인 단일 표 구조 파서
     # ==========================================
     header_texts = {}
     for c in range(1, max_c + 1):
