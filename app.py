@@ -10,7 +10,7 @@ import streamlit as st
 st.set_page_config(page_title="전기사용량 50 미만 세대 추출기", layout="wide")
 
 st.title("⚡ 전기사용량 50 미만 세대 자동 추출 시스템")
-st.markdown("한일베라체, 연동드림아이 전용 파서 및 세로형·분할형 표를 지원하는 범용 키워드 탐색 구조를 제공합니다.")
+st.markdown("한일베라체, 연동드림아이 전용 파서 및 전월/지침 데이터 혼동을 방지하는 정밀 분할형 표 탐지 구조를 제공합니다.")
 
 def clean_num(val):
     if val is None or val == '' or val == '-':
@@ -22,6 +22,25 @@ def clean_num(val):
         except ValueError:
             return None
     return None
+
+def is_valid_ho(ho_str):
+    if not ho_str:
+        return False
+    s = str(ho_str).strip().replace('.0', '')
+    EXCLUDE_KEYWORDS = {'합계', '소계', '합  계', '전월', '당월', '구분', '호', '동', '청구월', 'None', '', '평균', '차액', 'NO', '시작지침', '종료지침', '동계', '하계', '난방', '온수', '총계', '계'}
+    if s in EXCLUDE_KEYWORDS or any(k in s for k in EXCLUDE_KEYWORDS):
+        return False
+    
+    clean_digits = re.sub(r'[^0-9]', '', s)
+    if not clean_digits:
+        return False
+    
+    val_num = int(clean_digits)
+    # 지나치게 큰 숫자는 전월 지침이나 관리 코드이므로 호수에서 제외 (예: 5000 초과 값 방어)
+    if val_num > 5000 or val_num == 0:
+        return False
+        
+    return True
 
 @st.cache_data(show_spinner=False)
 def load_any_excel_to_openpyxl(file_bytes, filename):
@@ -153,7 +172,7 @@ def parse_excel_universal_sorted(file_bytes, filename):
             use_val = ws.cell(r, 4).value
             if ho_val is not None and use_val is not None:
                 str_ho = str(ho_val).strip()
-                if str_ho in EXCLUDE_KEYWORDS or any(k in str_ho for k in ['합계', '소계', '호수', '검침표']):
+                if not is_valid_ho(str_ho):
                     continue
                 use_num = clean_num(use_val)
                 if use_num is not None:
@@ -179,7 +198,7 @@ def parse_excel_universal_sorted(file_bytes, filename):
             if dong_val is not None and ho_val is not None and use_val is not None:
                 str_dong = str(int(float(dong_val))) if str(dong_val).replace('.','',1).isdigit() else str(dong_val).strip()
                 str_ho = str(int(float(ho_val))) if str(ho_val).replace('.','',1).isdigit() else str(ho_val).strip()
-                if str_ho in EXCLUDE_KEYWORDS or any(k in str_ho for k in ['동계', '하계', '합계', '소계', '난방', '온수']):
+                if not is_valid_ho(str_ho):
                     continue
                 use_num = clean_num(use_val)
                 if use_num is not None:
@@ -208,18 +227,22 @@ def parse_excel_universal_sorted(file_bytes, filename):
     dong_cols, ho_cols, use_cols = [], [], []
     for c, h_text in header_texts.items():
         h_clean = h_text.replace(" ", "")
-        if '동' in h_clean and not any(k in h_clean for k in ['동계', '하계', '부하', '사용량', '지역', '지침']):
+        if '동' in h_clean and not any(k in h_clean for k in ['동계', '하계', '부하', '사용량', '지역', '지침', '전월']):
             dong_cols.append(c)
-        if any(k in h_clean for k in ['호실', '호수', '세대', '구분', '호(구분)']) and '사용량' not in h_clean:
+        # 헤더 명칭에 '전월'이나 '시작지침', '종료지침'이 포함된 컬럼은 호수(호실) 컬럼에서 확실히 제외
+        if any(k in h_clean for k in ['호실', '호수', '세대', '구분', '호(구분)']) and not any(k in h_clean for k in ['사용량', '전월', '지침']):
             ho_cols.append(c)
-        if any(k in h_clean for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량', '전기사용량']) and '지침' not in h_clean:
+        if any(k in h_clean for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량', '전기사용량']) and not any(k in h_clean for k in ['전월사용', '전월지침', '시작지침']):
             use_cols.append(c)
 
     # A. 세로형 / 분할형 표 구조 탐지 (예: 여러 개의 호실/사용량 쌍이 가로 블록 단위로 나뉘어 있는 경우)
     if len(ho_cols) >= 2 or len(use_cols) >= 2:
-        # 각 호실 컬럼과 대응되는 사용량 컬럼을 짝지어 탐색
         for h_c in ho_cols:
-            # 해당 호실 컬럼과 가장 가까운 우측의 사용량 컬럼 매칭
+            # 해당 호실 컬럼의 헤더가 '전월' 관련 내용을 포함하는지 최종 확인 후 스킵
+            h_header_text = header_texts.get(h_c, '').replace(" ", "")
+            if '전월' in h_header_text or '지침' in h_header_text:
+                continue
+
             valid_u_cols = [u for u in use_cols if u >= h_c and u <= h_c + 3]
             u_c = valid_u_cols[0] if valid_u_cols else (use_cols[0] if use_cols else h_c + 1)
             
@@ -228,7 +251,7 @@ def parse_excel_universal_sorted(file_bytes, filename):
                 raw_use = ws.cell(r, u_c).value
                 if raw_ho is not None and raw_use is not None:
                     str_ho = str(raw_ho).strip()
-                    if str_ho in EXCLUDE_KEYWORDS or any(k in str_ho for k in ['합계', '소계', '구분', '호실', '호수', '동계', '하계', '난방', '온수']):
+                    if not is_valid_ho(str_ho):
                         continue
                     use_num = clean_num(raw_use)
                     if use_num is not None:
@@ -263,7 +286,7 @@ def parse_excel_universal_sorted(file_bytes, filename):
 
         if raw_ho is not None and raw_use is not None:
             str_ho = str(raw_ho).strip()
-            if str_ho in EXCLUDE_KEYWORDS or any(k in str_ho for k in ['동계', '하계', 'EV', '합계', '소계', '전기검침', '호 수', '난방', '온수', '구분']):
+            if not is_valid_ho(str_ho):
                 continue
 
             use_num = clean_num(raw_use)
