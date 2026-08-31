@@ -10,7 +10,7 @@ import streamlit as st
 st.set_page_config(page_title="전기사용량 50 미만 세대 추출기", layout="wide")
 
 st.title("⚡ 전기사용량 50 미만 세대 자동 추출 시스템")
-st.markdown("한일베라체, 연동드림아이, 힐튼 및 좌우 병렬형 검침표 양식을 완벽 지원합니다.")
+st.markdown("모든 검침 양식을 완벽 지원을 목표로 하고 있습니다.")
 
 def clean_num(val):
     if val is None or val == '' or val == '-':
