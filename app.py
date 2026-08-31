@@ -387,7 +387,6 @@ def parse_excel_cached(file_hash, file_bytes, filename):
 
 # 사이드바 영역
 with st.sidebar:
-    st.image("https://img.icons8.com/color/96/lightning-bolt.png", width=64)
     st.markdown("### 📂 파일 업로드 센터")
     uploaded_files = st.file_uploader(
         "엑셀 파일(.xlsx, .xls) 다중 선택 가능", 
