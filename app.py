@@ -460,7 +460,6 @@ if uploaded_files:
                     use_container_width=True
                 )
             else:
-                st.balloons()
                 st.success("🎉 해당 파일에는 사용량 50 미만인 세대가 존재하지 않습니다!")
 else:
     st.markdown("---")
