@@ -181,25 +181,22 @@ def parse_excel_cached(file_hash, file_bytes, filename):
 
     sheet_records = []
 
-    # [1] 힐튼 전용 파서
+    # [1] 힐튼 전용 파서 (병렬 블록 구조 완벽 대응)
     if '힐튼' in filename:
-        for r in range(1, max_r + 1):
-            ho_val = ws.cell(r, 1).value
-            use_val = ws.cell(r, 3).value
-            if use_val is None and max_c >= 4:
-                use_val = ws.cell(r, 4).value
-            
-            if ho_val is not None and use_val is not None:
-                str_ho = str(ho_val).strip()
-                if not is_valid_ho(str_ho):
-                    continue
-                use_num = clean_num(use_val)
-                if use_num is not None:
-                    sheet_records.append({
-                        '동': '',
-                        '구분/호수': str_ho.replace('호', ''),
-                        '사용량(kWh)': use_num
-                    })
+        for c in range(1, max_c + 1, 4):
+            for r in range(3, max_r + 1):
+                ho_val = ws.cell(row=r, column=c).value
+                use_val = ws.cell(row=r, column=c + 3).value
+                if ho_val is not None and use_val is not None:
+                    str_ho = str(ho_val).strip().replace('호', '').replace('.0', '')
+                    if is_valid_ho(str_ho):
+                        use_num = clean_num(use_val)
+                        if use_num is not None:
+                            sheet_records.append({
+                                '동': '',
+                                '구분/호수': str_ho,
+                                '사용량(kWh)': use_num
+                            })
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
