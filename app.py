@@ -16,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 외부 CSS 실시간 로드 함수 (개발 및 배포 공용) ---
+# --- 외부 CSS 실시간 로드 함수 ---
 def local_css(file_name):
     try:
         with open(file_name, encoding='utf-8') as f:
@@ -181,7 +181,29 @@ def parse_excel_cached(file_hash, file_bytes, filename):
 
     sheet_records = []
 
-    # [1] 연동드림아이 전용 파서
+    # [1] 힐튼 전용 파서
+    if '힐튼' in filename:
+        for r in range(1, max_r + 1):
+            ho_val = ws.cell(r, 1).value
+            use_val = ws.cell(r, 3).value
+            if use_val is None and max_c >= 4:
+                use_val = ws.cell(r, 4).value
+            
+            if ho_val is not None and use_val is not None:
+                str_ho = str(ho_val).strip()
+                if not is_valid_ho(str_ho):
+                    continue
+                use_num = clean_num(use_val)
+                if use_num is not None:
+                    sheet_records.append({
+                        '동': '',
+                        '구분/호수': str_ho.replace('호', ''),
+                        '사용량(kWh)': use_num
+                    })
+        if sheet_records:
+            return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
+
+    # [2] 연동드림아이 전용 파서
     is_yeonmok_format = False
     for r in range(1, min(5, max_r + 1)):
         row_str = " ".join([str(ws.cell(r, c).value or '') for c in range(1, min(5, max_c + 1))])
@@ -189,7 +211,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
             is_yeonmok_format = True
             break
 
-    if is_yeonmok_format or ('검침표' in filename or '연동드림아이' in filename):
+    if is_yeonmok_format or ('검침표' in filename and '힐튼' not in filename):
         for r in range(1, max_r + 1):
             ho_val = ws.cell(r, 1).value
             use_val = ws.cell(r, 4).value
@@ -207,7 +229,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
-    # [2] 한일베라체 전용 파서
+    # [3] 한일베라체 전용 파서
     if '한일베라체' in filename or '한일' in filename:
         for r in range(5, max_r + 1):
             dong_val = ws.cell(r, 2).value
@@ -231,7 +253,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
-    # [2-1] 벨라시티 전용 파서
+    # [4] 벨라시티 전용 파서
     if '벨라시티' in filename:
         current_dong = ""
         for r in range(1, max_r + 1):
@@ -269,7 +291,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
-    # [3] 좌우 병렬 반복형 구조 파서
+    # [5] 좌우 병렬 반복형 구조 파서
     for c in range(1, max_c + 1):
         h_val = ws.cell(row=1, column=c).value
         if h_val is not None and ('동' in str(h_val)):
@@ -302,7 +324,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
     if sheet_records:
         return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
-    # [4] 일반 단일 표 구조 파서
+    # [6] 일반 단일 표 구조 파서
     header_texts = {}
     for c in range(1, max_c + 1):
         col_text_list = []
