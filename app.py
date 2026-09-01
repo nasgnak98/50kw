@@ -25,7 +25,7 @@ local_css("assets/style.css")
 # ==========================================
 with st.sidebar:
     st.markdown("### 📂 파일 업로드")
-    uploaded_files = st.file_uploader(
+    uploaded_files = file_uploader = st.file_uploader(
         "엑셀 파일(.xlsx, .xls) 선택", 
         type=["xlsx", "xls"], 
         accept_multiple_files=True
@@ -44,12 +44,21 @@ st.markdown('<p class="main-title" style="font-size: 40px;">⚡ 전기사용량 
 st.markdown('<p class="sub-title">제이하임, 한일베라체, 벨라시티, 연동드림아이, 힐튼, 엠제이벤처 및 좌우 병렬형 검침표 양식을 고속으로 분석합니다.</p>', unsafe_allow_html=True)
 
 def clean_num(val):
-    if val is None or val == '' or val == '-':
+    if val is None:
         return None
-    val_str = str(val).strip().replace(",", "")
-    if re.fullmatch(r"[-+]?\d*\.?\d+", val_str):
+    # 한셀 및 기타 엑셀 프로그램에서 문자열/특수기호로 묶여 들어오는 경우 대응
+    val_str = str(val).strip()
+    if val_str == '' or val_str == '-' or val_str.upper() == 'NONE':
+        return None
+    
+    # 쉼표 제거 및 제어문자/특수문자 중 숫자와 소수점, 부호만 추출 시도
+    val_str = val_str.replace(",", "").replace("원", "").replace("kWh", "").replace("KW", "").strip()
+    
+    # 숫자형태 매칭 정규식 (음수, 소수점 포함)
+    match = re.search(r"[-+]?\d*\.?\d+", val_str)
+    if match:
         try:
-            return float(val_str)
+            return float(match.group())
         except ValueError:
             return None
     return None
