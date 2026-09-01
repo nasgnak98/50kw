@@ -25,7 +25,7 @@ local_css("assets/style.css")
 # ==========================================
 with st.sidebar:
     st.markdown("### 📂 파일 업로드")
-    uploaded_files = file_uploader = st.file_uploader(
+    uploaded_files = st.file_uploader(
         "엑셀 파일(.xlsx, .xls) 선택", 
         type=["xlsx", "xls"], 
         accept_multiple_files=True
@@ -46,15 +46,12 @@ st.markdown('<p class="sub-title">제이하임, 한일베라체, 벨라시티, �
 def clean_num(val):
     if val is None:
         return None
-    # 한셀 및 기타 엑셀 프로그램에서 문자열/특수기호로 묶여 들어오는 경우 대응
     val_str = str(val).strip()
     if val_str == '' or val_str == '-' or val_str.upper() == 'NONE':
         return None
     
-    # 쉼표 제거 및 제어문자/특수문자 중 숫자와 소수점, 부호만 추출 시도
     val_str = val_str.replace(",", "").replace("원", "").replace("kWh", "").replace("KW", "").strip()
     
-    # 숫자형태 매칭 정규식 (음수, 소수점 포함)
     match = re.search(r"[-+]?\d*\.?\d+", val_str)
     if match:
         try:
@@ -87,11 +84,13 @@ def get_file_hash(file_bytes):
 
 @st.cache_data(show_spinner=False)
 def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
+    pyxl_wb = Workbook()
+    pyxl_wb.remove(pyxl_wb.active)
+
+    # 1. XML 기반 스프레드시트 (MS Office XML / 구형 포맷 등) 처리 시도
     if file_bytes.startswith(b'<?xml') or b'urn:schemas-microsoft-com:office:spreadsheet' in file_bytes:
         try:
             root = ET.fromstring(file_bytes)
-            pyxl_wb = Workbook()
-            pyxl_wb.remove(pyxl_wb.active)
             namespaces = {'ss': 'urn:schemas-microsoft-com:office:spreadsheet'}
             for ws_elem in root.findall('.//ss:Worksheet', namespaces):
                 ws_name = ws_elem.attrib.get('{urn:schemas-microsoft-com:office:spreadsheet}Name', 'Sheet1')
@@ -114,11 +113,9 @@ def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
         except Exception:
             pass
 
-    pyxl_wb = Workbook()
-    pyxl_wb.remove(pyxl_wb.active)
-
+    # 2. 구형 엑셀 파일(.xls, xlrd 지원) 처리 시도
     try:
-        xls_wb = xlrd.open_workbook(file_contents=file_bytes)
+        xls_wb = xlrd.open_workbook(file_contents=file_bytes, formatting_info=False)
         for sheet_name in xls_wb.sheet_names():
             xls_sheet = xls_wb.sheet_by_name(sheet_name)
             target_ws = pyxl_wb.create_sheet(title=sheet_name)
@@ -129,17 +126,48 @@ def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
     except Exception:
         pass
 
+    # 3. 표준 openpyxl 로딩 시도 (한셀 파일 등 스타일 예외 발생 시 data_only=False로 재시도하거나 안전하게 값 추출)
     try:
-        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=False)
         for sheetname in wb.sheetnames:
             ws = wb[sheetname]
             target_ws = pyxl_wb.create_sheet(title=sheetname)
             for r in range(1, ws.max_row + 1):
-                target_ws.append([ws.cell(r, c).value for c in range(1, ws.max_column + 1)])
+                row_vals = []
+                for c in range(1, ws.max_column + 1):
+                    try:
+                        val = ws.cell(r, c).value
+                    except Exception:
+                        val = None
+                    row_vals.append(val)
+                target_ws.append(row_vals)
         if pyxl_wb.sheetnames:
             return pyxl_wb
     except Exception:
-        pass
+        # data_only=True에서 스타일/수식 오류 발생 시 안전 모드로 재시도
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=False)
+            for sheetname in wb.sheetnames:
+                ws = wb[sheetname]
+                target_ws = pyxl_wb.create_sheet(title=sheetname)
+                for r in range(1, ws.max_row + 1):
+                    row_vals = []
+                    for c in range(1, ws.max_column + 1):
+                        try:
+                            val = ws.cell(r, c).value
+                        except Exception:
+                            val = None
+                        row_vals.append(val)
+                    target_ws.append(row_vals)
+            if pyxl_wb.sheetnames:
+                return pyxl_wb
+        except Exception:
+            pass
+
+    # 4. 모든 방법 실패 시 빈 워크북에 기본 Sheet1 생성 (Fallback 방지용 기본 시트 이름 보정)
+    if not pyxl_wb.sheetnames:
+        fallback_ws = pyxl_wb.create_sheet(title="Sheet1")
+        fallback_ws.append(["파일 읽기 실패 또는 지원하지 않는 형식입니다."])
 
     return pyxl_wb
 
@@ -147,7 +175,6 @@ def finalize_dataframe(df):
     if not df.empty:
         df = df.drop_duplicates().reset_index(drop=True)
         
-        # [보완] 동·호수 존재 여부에 따라 일관된 오름차순 정렬 적용 (행 순서 차이 무력화)
         if '동' in df.columns and df['동'].astype(str).str.strip().ne('').any() and not df['동'].isna().all():
             df = df.assign(
                 sort_dong=pd.to_numeric(df['동'].astype(str).str.extract(r'(\d+)')[0], errors='coerce').fillna(0),
@@ -418,7 +445,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
     if sheet_records:
         return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
-    # [5] 일반적인 단일 표 구조 파서 (한셀/엑셀 겸용 헤더 매칭 보완)
+    # [5] 일반적인 단일 표 구조 파서
     header_texts = {}
     for c in range(1, max_c + 1):
         col_text_list = []
@@ -437,14 +464,12 @@ def parse_excel_cached(file_hash, file_bytes, filename):
             dong_cols.append(c)
         if any(k in h_clean for k in ['호실', '호수', '세대', '구분', '호(구분)', '호']) and not any(k in h_clean for k in ['사용량', '전월', '지침']):
             ho_cols.append(c)
-        # [보완] 엑셀/한셀의 3번째 컬럼(사용량) 또는 엑셀 직렬값/날짜헤더 등 유연하게 탐지
         if any(k in h_clean for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량', '전기사용량', '46248']) and not any(k in h_clean for k in ['전월사용', '전월지침', '시작지침', '46218']):
             use_cols.append(c)
 
     has_dong_col = len(dong_cols) > 0
     d_col = dong_cols[0] if has_dong_col else None
     h_col = ho_cols[0] if ho_cols else (2 if has_dong_col else 1)
-    # 만약 사용량 컬럼을 찾지 못했다면 마지막 컬럼을 기본 사용량으로 지정
     u_col = use_cols[0] if use_cols else (6 if max_c >= 6 else max_c)
 
     current_dong = ""
@@ -480,7 +505,6 @@ def parse_excel_cached(file_hash, file_bytes, filename):
                 })
 
     return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
-
 
 # 메인 화면 처리 로직
 if uploaded_files:
