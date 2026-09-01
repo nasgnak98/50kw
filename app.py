@@ -11,7 +11,7 @@ import os
 
 st.set_page_config(page_title="전기사용량 50 미만 세대 추출기", layout="wide")
 
-# 외부 CSS 파일 로드 함수 (함수명을 local_css로 통일하고 경로 처리)
+# 외부 CSS 파일 로드 함수
 def local_css(file_name):
     if os.path.exists(file_name):
         with open(file_name, "r", encoding="utf-8") as f:
@@ -20,8 +20,9 @@ def local_css(file_name):
 # assets 폴더 안의 style.css 불러오기
 local_css("assets/style.css")
 
-st.title("⚡ 전기사용량 50 미만 세대 자동 추출 시스템 (고속 처리 모드)")
-st.markdown("제이하임, 한일베라체, 벨라시티, 연동드림아이, 힐튼, 엠제이벤처 및 좌우 병렬형 검침표 양식을 고속으로 분석합니다.")
+# CSS 클래스가 적용되도록 HTML 태그로 타이틀 및 서브타이틀 출력
+st.markdown('<p class="main-title">⚡ 전기사용량 50 미만 세대 자동 추출 시스템 (고속 처리 모드)</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">제이하임, 한일베라체, 벨라시티, 연동드림아이, 힐튼, 엠제이벤처 및 좌우 병렬형 검침표 양식을 고속으로 분석합니다.</p>', unsafe_allow_html=True)
 
 def clean_num(val):
     if val is None or val == '' or val == '-':
