@@ -11,13 +11,13 @@ import os
 
 st.set_page_config(page_title="전기사용량 50 미만 세대 추출기", layout="wide")
 
-# 외부 CSS 파일 로드 함수 (레포지토리 루트에 있는 style.css 파일을 읽어옴)
-def load_css(file_name="style.css"):
+# 외부 CSS 파일 로드 함수 (함수명을 local_css로 통일하고 경로 처리)
+def local_css(file_name):
     if os.path.exists(file_name):
         with open(file_name, "r", encoding="utf-8") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-# CSS 적용 실행
+# assets 폴더 안의 style.css 불러오기
 local_css("assets/style.css")
 
 st.title("⚡ 전기사용량 50 미만 세대 자동 추출 시스템 (고속 처리 모드)")
