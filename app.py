@@ -126,46 +126,49 @@ def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
     except Exception:
         pass
 
-    # 3. 표준 openpyxl 로딩 시도
+    # 3. Pandas를 활용한 한셀 수식/스타일 안전 로딩
     try:
-        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=False)
-        for sheetname in wb.sheetnames:
-            ws = wb[sheetname]
-            target_ws = pyxl_wb.create_sheet(title=sheetname)
-            for r in range(1, ws.max_row + 1):
-                row_vals = []
-                for c in range(1, ws.max_column + 1):
-                    try:
-                        val = ws.cell(r, c).value
-                    except Exception:
-                        val = None
-                    row_vals.append(val)
-                target_ws.append(row_vals)
+        xls = pd.ExcelFile(io.BytesIO(file_bytes), engine='openpyxl')
+        for sheet_name in xls.sheet_names:
+            df = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+            target_ws = pyxl_wb.create_sheet(title=sheet_name)
+            for _, row in df.iterrows():
+                target_ws.append(row.tolist())
         if pyxl_wb.sheetnames:
             return pyxl_wb
     except Exception:
+        pass
+
+    # 4. 표준 openpyxl Fallback
+    if not pyxl_wb.sheetnames:
+        pyxl_wb = Workbook()
+        pyxl_wb.remove(pyxl_wb.active)
         try:
-            wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=False)
+            wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
             for sheetname in wb.sheetnames:
                 ws = wb[sheetname]
                 target_ws = pyxl_wb.create_sheet(title=sheetname)
                 for r in range(1, ws.max_row + 1):
-                    row_vals = []
-                    for c in range(1, ws.max_column + 1):
-                        try:
-                            val = ws.cell(r, c).value
-                        except Exception:
-                            val = None
-                        row_vals.append(val)
+                    row_vals = [ws.cell(r, c).value for c in range(1, ws.max_column + 1)]
                     target_ws.append(row_vals)
-            if pyxl_wb.sheetnames:
-                return pyxl_wb
         except Exception:
-            pass
+            try:
+                wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=False)
+                for sheetname in wb.sheetnames:
+                    ws = wb[sheetname]
+                    target_ws = pyxl_wb.create_sheet(title=sheetname)
+                    for r in range(1, ws.max_row + 1):
+                        row_vals = []
+                        for c in range(1, ws.max_column + 1):
+                            val = ws.cell(r, c).value
+                            row_vals.append(None if str(val).startswith('=') else val)
+                        target_ws.append(row_vals)
+            except Exception:
+                pass
 
     if not pyxl_wb.sheetnames:
         fallback_ws = pyxl_wb.create_sheet(title="Sheet1")
-        fallback_ws.append(["파일 읽기 실패 또는 지원하지 않는 형식입니다."])
+        fallback_ws.append(["파일 읽기 실패"])
 
     return pyxl_wb
 
