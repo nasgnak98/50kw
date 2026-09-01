@@ -140,11 +140,11 @@ def finalize_dataframe(df):
         if '동' in df.columns and df['동'].astype(str).str.strip().ne('').any() and not df['동'].isna().all():
             df = df.assign(
                 sort_dong=pd.to_numeric(df['동'].astype(str).str.extract(r'(\d+)')[0], errors='coerce').fillna(0),
-                sort_ho=pd.to_numeric(df['구분/호수'].astype(str).str.extract(r'(\d+)')[0], errors='coerce').fillna(0)
+                sort_ho=pd.to_numeric(df['호수'].astype(str).str.extract(r'(\d+)')[0], errors='coerce').fillna(0)
             ).sort_values(by=['sort_dong', 'sort_ho']).drop(columns=['sort_dong', 'sort_ho']).reset_index(drop=True)
         else:
             df = df.assign(
-                sort_ho=pd.to_numeric(df['구분/호수'].astype(str).str.extract(r'(\d+)')[0], errors='coerce').fillna(0)
+                sort_ho=pd.to_numeric(df['호수'].astype(str).str.extract(r'(\d+)')[0], errors='coerce').fillna(0)
             ).sort_values(by=['sort_ho']).drop(columns=['sort_ho']).reset_index(drop=True)
         df.index = df.index + 1
     return df
@@ -211,8 +211,8 @@ def parse_excel_cached(file_hash, file_bytes, filename):
                 if use_num is not None:
                     sheet_records.append({
                         '동': '',
-                        '구분/호수': str_ho.replace('호', ''),
-                        '사용량(kWh)': use_num
+                        '호수': str_ho.replace('호', ''),
+                        '사용량(kw)': use_num
                     })
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
@@ -237,8 +237,8 @@ def parse_excel_cached(file_hash, file_bytes, filename):
                 if use_num is not None:
                     sheet_records.append({
                         '동': '',
-                        '구분/호수': str_ho.replace('호', ''),
-                        '사용량(kWh)': use_num
+                        '호수': str_ho.replace('호', ''),
+                        '사용량(kw)': use_num
                     })
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
@@ -261,8 +261,8 @@ def parse_excel_cached(file_hash, file_bytes, filename):
                 if use_num is not None:
                     sheet_records.append({
                         '동': str_dong.replace('동', ''),
-                        '구분/호수': str_ho.replace('호', ''),
-                        '사용량(kWh)': use_num
+                        '호수': str_ho.replace('호', ''),
+                        '사용량(kw)': use_num
                     })
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
@@ -299,8 +299,8 @@ def parse_excel_cached(file_hash, file_bytes, filename):
                     if u_num is not None:
                         sheet_records.append({
                             '동': current_dong,
-                            '구분/호수': str_h,
-                            '사용량(kWh)': u_num
+                            '호수': str_h,
+                            '사용량(kw)': u_num
                         })
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
@@ -345,8 +345,8 @@ def parse_excel_cached(file_hash, file_bytes, filename):
                     if u_num is not None:
                         sheet_records.append({
                             '동': '',
-                            '구분/호수': str_ho,
-                            '사용량(kWh)': u_num
+                            '호수': str_ho,
+                            '사용량(kw)': u_num
                         })
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
@@ -378,8 +378,8 @@ def parse_excel_cached(file_hash, file_bytes, filename):
                                 if u_num is not None:
                                     sheet_records.append({
                                         '동': str_d,
-                                        '구분/호수': str_h,
-                                        '사용량(kWh)': u_num
+                                        '호수': str_h,
+                                        '사용량(kw)': u_num
                                     })
     if sheet_records:
         return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
@@ -400,8 +400,8 @@ def parse_excel_cached(file_hash, file_bytes, filename):
                         if use_num is not None:
                             sheet_records.append({
                                 '동': '',
-                                '구분/호수': str_ho,
-                                '사용량(kWh)': use_num
+                                '호수': str_ho,
+                                '사용량(kw)': use_num
                             })
     if sheet_records:
         return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
@@ -482,7 +482,7 @@ if uploaded_files:
             selected_sheets_info[file.name] = detected_sheet
 
             if not df_parsed.empty:
-                df_under_50 = df_parsed[df_parsed['사용량(kWh)'] < 50].copy()
+                df_under_50 = df_parsed[df_parsed['사용량(kw)'] < 50].copy()
                 df_under_50.reset_index(drop=True, inplace=True)
                 df_under_50.index = df_under_50.index + 1
                 results[file.name] = df_under_50
