@@ -146,6 +146,8 @@ def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
 def finalize_dataframe(df):
     if not df.empty:
         df = df.drop_duplicates().reset_index(drop=True)
+        
+        # [보완] 동·호수 존재 여부에 따라 일관된 오름차순 정렬 적용 (행 순서 차이 무력화)
         if '동' in df.columns and df['동'].astype(str).str.strip().ne('').any() and not df['동'].isna().all():
             df = df.assign(
                 sort_dong=pd.to_numeric(df['동'].astype(str).str.extract(r'(\d+)')[0], errors='coerce').fillna(0),
@@ -155,6 +157,7 @@ def finalize_dataframe(df):
             df = df.assign(
                 sort_ho=pd.to_numeric(df['호수'].astype(str).str.extract(r'(\d+)')[0], errors='coerce').fillna(0)
             ).sort_values(by=['sort_ho']).drop(columns=['sort_ho']).reset_index(drop=True)
+            
         df.index = df.index + 1
     return df
 
@@ -415,7 +418,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
     if sheet_records:
         return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
-    # [5] 일반적인 단일 표 구조 파서
+    # [5] 일반적인 단일 표 구조 파서 (한셀/엑셀 겸용 헤더 매칭 보완)
     header_texts = {}
     for c in range(1, max_c + 1):
         col_text_list = []
@@ -434,13 +437,15 @@ def parse_excel_cached(file_hash, file_bytes, filename):
             dong_cols.append(c)
         if any(k in h_clean for k in ['호실', '호수', '세대', '구분', '호(구분)', '호']) and not any(k in h_clean for k in ['사용량', '전월', '지침']):
             ho_cols.append(c)
-        if any(k in h_clean for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량', '전기사용량']) and not any(k in h_clean for k in ['전월사용', '전월지침', '시작지침']):
+        # [보완] 엑셀/한셀의 3번째 컬럼(사용량) 또는 엑셀 직렬값/날짜헤더 등 유연하게 탐지
+        if any(k in h_clean for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량', '전기사용량', '46248']) and not any(k in h_clean for k in ['전월사용', '전월지침', '시작지침', '46218']):
             use_cols.append(c)
 
     has_dong_col = len(dong_cols) > 0
     d_col = dong_cols[0] if has_dong_col else None
     h_col = ho_cols[0] if ho_cols else (2 if has_dong_col else 1)
-    u_col = use_cols[0] if use_cols else max_c
+    # 만약 사용량 컬럼을 찾지 못했다면 마지막 컬럼을 기본 사용량으로 지정
+    u_col = use_cols[0] if use_cols else (6 if max_c >= 6 else max_c)
 
     current_dong = ""
     for r in range(1, max_r + 1):
