@@ -4,23 +4,25 @@ import hashlib
 import xml.etree.ElementTree as ET
 import pandas as pd
 import openpyxl
-import xlrd
 from openpyxl import Workbook
+import xlrd
 import streamlit as st
 import os
-import warnings
-
-warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
 st.set_page_config(page_title="전기사용량 50 미만 세대 추출기", layout="wide")
 
+# 외부 CSS 파일 로드 함수
 def local_css(file_name):
     if os.path.exists(file_name):
         with open(file_name, "r", encoding="utf-8") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
+# assets 폴더 안의 style.css 불러오기
 local_css("assets/style.css")
 
+# ==========================================
+# 📌 사이드바 영역 (파일 업로드 및 안내)
+# ==========================================
 with st.sidebar:
     st.markdown("### 📂 파일 업로드")
     uploaded_files = st.file_uploader(
@@ -28,20 +30,24 @@ with st.sidebar:
         type=["xlsx", "xls"], 
         accept_multiple_files=True
     )
+    
     st.markdown("---")
     st.markdown("### 📌 시스템 안내")
     st.markdown("본 프로그램은 공동주택의 전기사용량 검침표 엑셀 파일을 분석하여 **50 kWh 미만 세대**를 자동으로 추출합니다.")
     st.markdown("---")
-    st.markdown("🛠 **지원 양식**\n- 제이하임\n- 한일베라체\n- 벨라시티\n- 연동드림아이\n- 힐튼 / 엠제이벤처\n- **한셀 지침 자동 계산 및 정밀 보정 양식**")
+    st.markdown("🛠 **지원 양식**\n- 중문오션클라우드\n- 제이하임\n- 한일베라체\n- 벨라시티\n- 연동드림아이\n- 힐튼 / 엠제이벤처\n- 좌우 병렬형 검침표")
 
+# ==========================================
+# 🖥️ 메인 화면 영역 (결과 출력)
+# ==========================================
 st.markdown('<p class="main-title" style="font-size: 40px;">⚡ 전기사용량 50 미만 세대 자동 검색 시스템</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">제이하임, 한일베라체, 벨라시티, 연동드림아이, 힐튼, 엠제이벤처 및 한셀 파일 양식을 고속으로 분석합니다.</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">중문오션클라우드, 제이하임, 한일베라체, 벨라시티, 연동드림아이, 힐튼, 엠제이벤처 및 좌우 병렬형 검침표 양식을 고속으로 분석합니다.</p>', unsafe_allow_html=True)
 
 def clean_num(val):
-    if val is None or pd.isna(val):
+    if val is None:
         return None
     val_str = str(val).strip()
-    if val_str == '' or val_str == '-' or val_str.upper() == 'NONE' or val_str.upper() == 'NAN':
+    if val_str == '' or val_str == '-' or val_str.upper() == 'NONE':
         return None
     
     val_str = val_str.replace(",", "").replace("원", "").replace("kWh", "").replace("KW", "").strip()
@@ -55,11 +61,11 @@ def clean_num(val):
     return None
 
 def is_valid_ho(ho_str):
-    if ho_str is None or pd.isna(ho_str):
+    if ho_str is None:
         return False
     s = str(ho_str).strip().replace('.0', '')
 
-    EXCLUDE_EXACT = {'합계', '소계', '합  계', '전월', '당월', '구분', '호', '동', '청구월', 'None', 'nan', '', '평균', '차액', 'NO', '시작지침', '종료지침', '동계', '하계', '난방', '온수', '총계', '계', '호실', '사용량'}
+    EXCLUDE_EXACT = {'합계', '소계', '합  계', '전월', '당월', '구분', '호', '동', '청구월', 'None', '', '평균', '차액', 'NO', '시작지침', '종료지침', '동계', '하계', '난방', '온수', '총계', '계', '호실', '사용량'}
     if s in EXCLUDE_EXACT:
         return False
 
@@ -81,7 +87,7 @@ def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
     pyxl_wb = Workbook()
     pyxl_wb.remove(pyxl_wb.active)
 
-    # 1. XML 기반 포맷
+    # 1. XML 기반 스프레드시트 처리 시도
     if file_bytes.startswith(b'<?xml') or b'urn:schemas-microsoft-com:office:spreadsheet' in file_bytes:
         try:
             root = ET.fromstring(file_bytes)
@@ -107,63 +113,59 @@ def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
         except Exception:
             pass
 
-    # 2. 구형 엑셀 (.xls)
-    if filename.lower().endswith('.xls'):
-        try:
-            xls_wb = xlrd.open_workbook(file_contents=file_bytes, formatting_info=False)
-            for sheet_name in xls_wb.sheet_names():
-                xls_sheet = xls_wb.sheet_by_name(sheet_name)
-                target_ws = pyxl_wb.create_sheet(title=sheet_name)
-                for r in range(xls_sheet.nrows):
-                    target_ws.append(xls_sheet.row_values(r))
-            if pyxl_wb.sheetnames:
-                return pyxl_wb
-        except Exception:
-            pass
-
-    # 3. Pandas를 활용한 한셀 수식/스타일 안전 로딩
+    # 2. 구형 엑셀 파일(.xls) 처리 시도
     try:
-        xls = pd.ExcelFile(io.BytesIO(file_bytes), engine='openpyxl')
-        for sheet_name in xls.sheet_names:
-            df = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+        xls_wb = xlrd.open_workbook(file_contents=file_bytes, formatting_info=False)
+        for sheet_name in xls_wb.sheet_names():
+            xls_sheet = xls_wb.sheet_by_name(sheet_name)
             target_ws = pyxl_wb.create_sheet(title=sheet_name)
-            for _, row in df.iterrows():
-                target_ws.append(row.tolist())
+            for r in range(xls_sheet.nrows):
+                target_ws.append(xls_sheet.row_values(r))
         if pyxl_wb.sheetnames:
             return pyxl_wb
     except Exception:
         pass
 
-    # 4. 표준 openpyxl Fallback
-    if not pyxl_wb.sheetnames:
-        pyxl_wb = Workbook()
-        pyxl_wb.remove(pyxl_wb.active)
+    # 3. 표준 openpyxl 로딩 시도
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=False)
+        for sheetname in wb.sheetnames:
+            ws = wb[sheetname]
+            target_ws = pyxl_wb.create_sheet(title=sheetname)
+            for r in range(1, ws.max_row + 1):
+                row_vals = []
+                for c in range(1, ws.max_column + 1):
+                    try:
+                        val = ws.cell(r, c).value
+                    except Exception:
+                        val = None
+                    row_vals.append(val)
+                target_ws.append(row_vals)
+        if pyxl_wb.sheetnames:
+            return pyxl_wb
+    except Exception:
         try:
-            wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+            wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=False)
             for sheetname in wb.sheetnames:
                 ws = wb[sheetname]
                 target_ws = pyxl_wb.create_sheet(title=sheetname)
                 for r in range(1, ws.max_row + 1):
-                    row_vals = [ws.cell(r, c).value for c in range(1, ws.max_column + 1)]
-                    target_ws.append(row_vals)
-        except Exception:
-            try:
-                wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=False)
-                for sheetname in wb.sheetnames:
-                    ws = wb[sheetname]
-                    target_ws = pyxl_wb.create_sheet(title=sheetname)
-                    for r in range(1, ws.max_row + 1):
-                        row_vals = []
-                        for c in range(1, ws.max_column + 1):
+                    row_vals = []
+                    for c in range(1, ws.max_column + 1):
+                        try:
                             val = ws.cell(r, c).value
-                            row_vals.append(None if str(val).startswith('=') else val)
-                        target_ws.append(row_vals)
-            except Exception:
-                pass
+                        except Exception:
+                            val = None
+                        row_vals.append(val)
+                    target_ws.append(row_vals)
+            if pyxl_wb.sheetnames:
+                return pyxl_wb
+        except Exception:
+            pass
 
     if not pyxl_wb.sheetnames:
         fallback_ws = pyxl_wb.create_sheet(title="Sheet1")
-        fallback_ws.append(["파일 읽기 실패"])
+        fallback_ws.append(["파일 읽기 실패 또는 지원하지 않는 형식입니다."])
 
     return pyxl_wb
 
@@ -215,9 +217,8 @@ def parse_excel_cached(file_hash, file_bytes, filename):
         max_score = -1
         for sheetname in wb.sheetnames:
             s = wb[sheetname]
-            valid_cells = sum(1 for row in s.iter_rows(values_only=True) if any(x is not None for x in row))
-            score = valid_cells
-            if any(k in sheetname for k in ['전기', '당월', '금월', '검침', '관리비', '전체', 'sheet1', 'Sheet1']) or len(wb.sheetnames) == 1:
+            score = s.max_row * s.max_column
+            if any(k in sheetname for k in ['전기', '당월', '금월', '검침', '관리비', '전체']) or len(wb.sheetnames) == 1:
                 score *= 2
             if score > max_score:
                 max_score = score
@@ -232,11 +233,288 @@ def parse_excel_cached(file_hash, file_bytes, filename):
 
     sheet_records = []
 
-    # === 헤더 텍스트 매핑 분석 (최대 20행까지 정밀 스캔) ===
+    # ==========================================================
+    # 🔍 [전용 파서들 시작]
+    # ==========================================================
+
+    # [-1] 중문오션클라우드 전용 파서
+    is_ocean_cloud = '중문오션클라우드' in filename or '오션클라우드' in filename or '중문' in filename
+    if not is_ocean_cloud:
+        for r in range(1, min(5, max_r + 1)):
+            row_text = "".join([str(ws.cell(r, c).value or '') for c in range(1, max_c + 1)])
+            if '중문오션클라우드' in row_text or '오션클라우드' in row_text:
+                is_ocean_cloud = True
+                break
+
+    if is_ocean_cloud:
+        h_col, u_col, d_col = None, None, None
+        header_row = 1
+        
+        for r in range(1, min(12, max_r + 1)):
+            for c in range(1, max_c + 1):
+                val_s = str(ws.cell(r, c).value or '').strip()
+                if any(k in val_s for k in ['호', '호실', '세대']):
+                    if h_col is None:
+                        h_col = c
+                if any(k in val_s for k in ['사용량', '금월사용', '계기사용량', '당월사용량']):
+                    if u_col is None:
+                        u_col = c
+                if '동' in val_s and not any(k in val_s for k in ['동계', '하계', '사용량']):
+                    if d_col is None:
+                        d_col = c
+            if h_col and u_col:
+                header_row = r
+                break
+                
+        if not h_col:
+            h_col = 2
+        if not u_col:
+            u_col = 6 if max_c >= 6 else max_c
+
+        current_dong = ""
+        for r in range(header_row + 1, max_r + 1):
+            if d_col:
+                val_d = ws.cell(r, d_col).value
+                if val_d is not None:
+                    s_d = str(val_d).strip().replace('.0', '').replace('동', '')
+                    if s_d.isdigit() and int(s_d) < 100:
+                        current_dong = s_d
+
+            ho_val = ws.cell(r, h_col).value
+            use_val = ws.cell(r, u_col).value
+
+            if ho_val is not None and use_val is not None:
+                str_ho = str(ho_val).strip().replace('.0', '').replace('호', '')
+                if is_valid_ho(str_ho):
+                    u_num = clean_num(use_val)
+                    if u_num is not None:
+                        sheet_records.append({
+                            '동': current_dong,
+                            '호수': str_ho,
+                            '사용량(kw)': u_num
+                        })
+        if sheet_records:
+            return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
+
+    # [0] 제이하임 전용 파서
+    if '제이하임' in filename:
+        for r in range(1, max_r + 1):
+            ho_val = ws.cell(r, 1).value
+            use_val = ws.cell(r, 4).value
+            if use_val is None and max_c >= 5:
+                use_val = ws.cell(r, 5).value
+            if ho_val is not None and use_val is not None:
+                str_ho = str(ho_val).strip()
+                if not is_valid_ho(str_ho):
+                    continue
+                use_num = clean_num(use_val)
+                if use_num is not None:
+                    sheet_records.append({
+                        '동': '',
+                        '호수': str_ho.replace('호', ''),
+                        '사용량(kw)': use_num
+                    })
+        if sheet_records:
+            return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
+
+    # [1] 연동드림아이 전용 파서
+    is_yeonmok_format = False
+    for r in range(1, min(5, max_r + 1)):
+        row_str = " ".join([str(ws.cell(r, c).value or '') for c in range(1, min(5, max_c + 1))])
+        if '검침표' in row_str or '연동드림아이' in row_str:
+            is_yeonmok_format = True
+            break
+
+    if is_yeonmok_format or ('검침표' in filename or '연동드림아이' in filename):
+        for r in range(1, max_r + 1):
+            ho_val = ws.cell(r, 1).value
+            use_val = ws.cell(r, 4).value
+            if ho_val is not None and use_val is not None:
+                str_ho = str(ho_val).strip()
+                if not is_valid_ho(str_ho):
+                    continue
+                use_num = clean_num(use_val)
+                if use_num is not None:
+                    sheet_records.append({
+                        '동': '',
+                        '호수': str_ho.replace('호', ''),
+                        '사용량(kw)': use_num
+                    })
+        if sheet_records:
+            return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
+
+    # [2] 한일베라체 전용 파서
+    if '한일베라체' in filename or '한일' in filename:
+        for r in range(5, max_r + 1):
+            dong_val = ws.cell(r, 2).value
+            ho_val = ws.cell(r, 3).value
+            use_val = ws.cell(r, 7).value
+            if use_val is None and max_c >= 8:
+                use_val = ws.cell(r, 8).value
+
+            if dong_val is not None and ho_val is not None and use_val is not None:
+                str_dong = str(int(float(dong_val))) if str(dong_val).replace('.','',1).isdigit() else str(dong_val).strip()
+                str_ho = str(int(float(ho_val))) if str(ho_val).replace('.','',1).isdigit() else str(ho_val).strip()
+                if not is_valid_ho(str_ho):
+                    continue
+                use_num = clean_num(use_val)
+                if use_num is not None:
+                    sheet_records.append({
+                        '동': str_dong.replace('동', ''),
+                        '호수': str_ho.replace('호', ''),
+                        '사용량(kw)': use_num
+                    })
+        if sheet_records:
+            return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
+
+    # [2-1] 벨라시티 전용 파서
+    if '벨라시티' in filename:
+        current_dong = ""
+        for r in range(1, max_r + 1):
+            val_d = ws.cell(row=r, column=4).value
+            if val_d is None:
+                val_d = ws.cell(row=r, column=3).value
+
+            val_h = ws.cell(row=r, column=5).value
+            if val_h is None:
+                val_h = ws.cell(row=r, column=4).value
+
+            val_u = ws.cell(row=r, column=9).value
+            if val_u is None and max_c >= 9:
+                for c_alt in range(6, max_c + 1):
+                    cand = ws.cell(row=r, column=c_alt).value
+                    if clean_num(cand) is not None:
+                        val_u = cand
+                        break
+
+            if val_d is not None:
+                s_d = str(val_d).strip().replace('.0', '').replace('동', '')
+                if s_d.isdigit() and int(s_d) < 100:
+                    current_dong = s_d
+
+            if val_h is not None and val_u is not None:
+                str_h = str(val_h).strip().replace('.0', '').replace('호', '')
+                if is_valid_ho(str_h):
+                    u_num = clean_num(val_u)
+                    if u_num is not None:
+                        sheet_records.append({
+                            '동': current_dong,
+                            '호수': str_h,
+                            '사용량(kw)': u_num
+                        })
+        if sheet_records:
+            return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
+
+    # [2-2] 엠제이벤처오름 전용 파서
+    is_mj_file = any(k in filename for k in ['엠제이', '벤처오름', '오름'])
+    if not is_mj_file:
+        for r in range(1, min(5, max_r + 1)):
+            row_text = "".join([str(ws.cell(r, c).value or '') for c in range(1, max_c + 1)])
+            if any(k in row_text for k in ['엠제이', '벤처오름']):
+                is_mj_file = True
+                break
+
+    if is_mj_file:
+        h_col, u_col = None, None
+        header_row = 1
+        
+        for r in range(1, min(10, max_r + 1)):
+            for c in range(1, max_c + 1):
+                val_s = str(ws.cell(r, c).value or '').strip()
+                if any(k in val_s for k in ['호', '호수', '구분', '세대']):
+                    if h_col is None:
+                        h_col = c
+                if '사용량' in val_s:
+                    if u_col is None:
+                        u_col = c
+            if h_col and u_col:
+                header_row = r
+                break
+                
+        if not h_col or not u_col:
+            h_col, u_col = 2, 6
+
+        for r in range(header_row + 1, max_r + 1):
+            ho_val = ws.cell(r, h_col).value
+            use_val = ws.cell(r, u_col).value
+
+            if ho_val is not None and use_val is not None:
+                str_ho = str(ho_val).strip().replace('.0', '').replace('호', '')
+                if is_valid_ho(str_ho):
+                    u_num = clean_num(use_val)
+                    if u_num is not None:
+                        sheet_records.append({
+                            '동': '',
+                            '호수': str_ho,
+                            '사용량(kw)': u_num
+                        })
+        if sheet_records:
+            return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
+
+    # [3] 좌우 병렬 반복형 구조 파서
+    for c in range(1, max_c + 1):
+        h_val = ws.cell(row=1, column=c).value
+        if h_val is not None and ('동' in str(h_val)):
+            d_col = c
+            h_col = c + 1
+            u_col = c + 2
+
+            if u_col <= max_c:
+                h_name = str(ws.cell(row=1, column=h_col).value or '')
+                u_name = str(ws.cell(row=1, column=u_col).value or '')
+
+                if '호' in h_name and '사용량' in u_name:
+                    for r in range(2, max_r + 1):
+                        d_val = ws.cell(row=r, column=d_col).value
+                        h_val_cell = ws.cell(row=r, column=h_col).value
+                        u_val_cell = ws.cell(row=r, column=u_col).value
+
+                        if d_val is not None and h_val_cell is not None and u_val_cell is not None:
+                            str_d = str(d_val).strip().replace('.0', '').replace('동', '')
+                            str_h = str(h_val_cell).strip().replace('.0', '').replace('호', '')
+
+                            if is_valid_ho(str_h):
+                                u_num = clean_num(u_val_cell)
+                                if u_num is not None:
+                                    sheet_records.append({
+                                        '동': str_d,
+                                        '호수': str_h,
+                                        '사용량(kw)': u_num
+                                    })
+    if sheet_records:
+        return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
+
+    # [4] 힐튼 등 가로 블록 반복형 구조 파서
+    for header_row in range(1, max_r + 1):
+        for c_start in range(1, max_c + 1, 4):
+            val = ws.cell(row=header_row, column=c_start).value
+            if val is not None and str(val).strip() == '구분':
+                for r in range(header_row + 1, max_r + 1):
+                    ho_cell = ws.cell(row=r, column=c_start).value
+                    use_cell = ws.cell(row=r, column=c_start + 3).value
+                    if ho_cell is not None and use_cell is not None:
+                        str_ho = str(ho_cell).strip().replace('.0', '').replace('호', '')
+                        if not is_valid_ho(str_ho):
+                            continue
+                        use_num = clean_num(use_cell)
+                        if use_num is not None:
+                            sheet_records.append({
+                                '동': '',
+                                '호수': str_ho,
+                                '사용량(kw)': use_num
+                            })
+    if sheet_records:
+        return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
+
+    # ==========================================================
+    # 🔍 [전용 파서들 끝]
+    # ==========================================================
+
+    # [5] 일반적인 단일 표 구조 파서 (기본 폴백)
     header_texts = {}
     for c in range(1, max_c + 1):
         col_text_list = []
-        for r in range(1, min(20, max_r + 1)):
+        for r in range(1, min(15, max_r + 1)):
             val = ws.cell(r, c).value
             if val is not None:
                 s_val = str(val).strip()
@@ -244,68 +522,26 @@ def parse_excel_cached(file_hash, file_bytes, filename):
                     col_text_list.append(s_val)
         header_texts[c] = " ".join(col_text_list)
 
-    dong_cols, ho_cols, use_cols, prev_cols, curr_cols = [], [], [], [], []
+    dong_cols, ho_cols, use_cols = [], [], []
     for c, h_text in header_texts.items():
         h_clean = h_text.replace(" ", "")
         if '동' in h_clean and not any(k in h_clean for k in ['동계', '하계', '부하', '사용량', '지역', '지침', '전월']):
             dong_cols.append(c)
-        if any(k in h_clean for k in ['호실', '호수', '세대', '구분', '호(구분)', '호']) and not any(k in h_clean for k in ['사용량', '전월', '지침', '단가']):
+        if any(k in h_clean for k in ['호실', '호수', '세대', '구분', '호(구분)', '호']) and not any(k in h_clean for k in ['사용량', '전월', '지침']):
             ho_cols.append(c)
         if any(k in h_clean for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량', '전기사용량']):
             use_cols.append(c)
-        if any(k in h_clean for k in ['전월지침', '기초지침', '전월', '시작지침']):
-            prev_cols.append(c)
-        if any(k in h_clean for k in ['당월지침', '현재지침', '당월', '종료지침', '금월지침']):
-            curr_cols.append(c)
 
     has_dong_col = len(dong_cols) > 0
     d_col = dong_cols[0] if has_dong_col else None
     h_col = ho_cols[0] if ho_cols else (2 if has_dong_col else 1)
-    
-    # 사용량 열 확정 (만약 키워드로 못 찾았다면 전월지침/당월지침 차이 계산 또는 숫자 분포 분석)
-    u_col = use_cols[0] if use_cols else None
-    p_col = prev_cols[0] if prev_cols else None
-    c_col = curr_cols[0] if curr_cols else None
-
-    # 만약 사용량 열이 명확하지 않고 당월/전월 지침 열이 있다면 직접 지침 간 차이를 계산하기 위한 후보 설정
-    if u_col is None and p_col and c_col:
-        # 지침 간의 차이를 사용량으로 간주
-        pass
-    elif u_col is None:
-        # 숫자가 가장 많이 들어있는 열 중 호수 열 다음의 적절한 열 탐색 (사용량 값은 보통 0~1000 사이)
-        best_u_col = None
-        min_avg_val = float('inf')
-        for c in range(h_col + 1, max_c + 1):
-            vals = []
-            for r in range(1, min(50, max_r + 1)):
-                v = clean_num(ws.cell(r, c).value)
-                if v is not None and v < 5000: # 지침처럼 너무 큰 숫자가 아닌 것
-                    vals.append(v)
-            if len(vals) > 5:
-                avg_v = sum(vals) / len(vals)
-                if avg_v < min_avg_val: # 평균값이 가장 작은 열이 보통 '사용량' 열임 (지침은 1만 단위로 큼)
-                    min_avg_val = avg_v
-                    best_u_col = c
-        u_col = best_u_col if best_u_col else (6 if max_c >= 6 else max_c)
+    u_col = use_cols[0] if use_cols else (6 if max_c >= 6 else max_c)
 
     current_dong = ""
     for r in range(1, max_r + 1):
         raw_dong = ws.cell(r, d_col).value if (has_dong_col and d_col) else None
-        raw_ho = ws.cell(r, h_col).value if (h_col <= max_c) else None
-        
-        # 사용량 값 추출 (u_col 직접 읽기 또는 당월지침 - 전월지침 계산)
-        raw_use = None
-        if u_col and u_col <= max_c:
-            raw_use = ws.cell(r, u_col).value
-            
-        use_num = clean_num(raw_use)
-        
-        # 만약 직접 읽은 사용량이 None이거나 너무 크다면 (지침을 잘못 읽었을 경우), 당월 - 전월로 계산 시도
-        if (use_num is None or use_num > 5000) and p_col and c_col and p_col <= max_c and c_col <= max_c:
-            p_val = clean_num(ws.cell(r, p_col).value)
-            c_val = clean_num(ws.cell(r, c_col).value)
-            if p_val is not None and c_val is not None and c_val >= p_val:
-                use_num = c_val - p_val
+        raw_ho = ws.cell(r, h_col).value if h_col else None
+        raw_use = ws.cell(r, u_col).value if u_col else None
 
         if has_dong_col and d_col and raw_dong is not None and str(raw_dong).strip() != '':
             str_d = str(raw_dong).strip()
@@ -316,23 +552,26 @@ def parse_excel_cached(file_hash, file_bytes, filename):
             elif '동' in str_d:
                 current_dong = str_d
 
-        if raw_ho is not None and use_num is not None:
+        if raw_ho is not None and raw_use is not None:
             str_ho = str(raw_ho).strip()
             if not is_valid_ho(str_ho):
                 continue
 
-            target_dong = str(current_dong).replace('동', '').strip() if has_dong_col else ''
-            if has_dong_col and (not target_dong or any(k in target_dong for k in ['계', '동계', '하계', '난방', '온수'])):
-                continue
+            use_num = clean_num(raw_use)
+            if use_num is not None:
+                target_dong = str(current_dong).replace('동', '').strip() if has_dong_col else ''
+                if has_dong_col and (not target_dong or any(k in target_dong for k in ['계', '동계', '하계', '난방', '온수'])):
+                    continue
 
-            sheet_records.append({
-                '동': target_dong,
-                '호수': str_ho.replace('호', ''),
-                '사용량(kw)': use_num
-            })
+                sheet_records.append({
+                    '동': target_dong,
+                    '호수': str_ho,
+                    '사용량(kw)': use_num
+                })
 
     return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
+# 메인 화면 처리 로직
 if uploaded_files:
     results = {}
     selected_sheets_info = {}
@@ -346,7 +585,6 @@ if uploaded_files:
             selected_sheets_info[file.name] = detected_sheet
 
             if not df_parsed.empty:
-                # 50 미만 세대 추출 (0 포함, 단 0보다 크고 50 미만인 세대들도 정확히 포착)
                 df_under_50 = df_parsed[df_parsed['사용량(kw)'] < 50].copy()
                 df_under_50.reset_index(drop=True, inplace=True)
                 df_under_50.index = df_under_50.index + 1
@@ -361,7 +599,7 @@ if uploaded_files:
     for i, (file_name, df_under_50) in enumerate(results.items()):
         with tabs[i]:
             detected_s = selected_sheets_info.get(file_name, '기본 시트')
-            st.info(f"📌 **자동 선택된 분석 시트**: `{detected_s}`")
+            st.info(f"📌 **자동 선택된 분석 시트 (가장 최근 날짜)**: `{detected_s}`")
             st.metric("⚠️ 50 미만 세대수", f"{len(df_under_50)} 건")
             if not df_under_50.empty:
                 st.dataframe(df_under_50, use_container_width=True)
