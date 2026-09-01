@@ -20,14 +20,26 @@ def local_css(file_name):
 # assets 폴더 안의 style.css 불러오기
 local_css("assets/style.css")
 
-# 사이드바 내용 추가 (이 내용이 있어야 사이드바가 화면에 나타납니다)
+# ==========================================
+# 📌 사이드바 영역 (파일 업로드 및 안내)
+# ==========================================
 with st.sidebar:
+    st.markdown("### 📂 파일 업로드")
+    uploaded_files = st.file_uploader(
+        "엑셀 파일(.xlsx, .xls) 선택", 
+        type=["xlsx", "xls"], 
+        accept_multiple_files=True
+    )
+    
+    st.markdown("---")
     st.markdown("### 📌 시스템 안내")
     st.markdown("본 프로그램은 아파트 및 집합건물의 전기사용량 검침표 엑셀 파일을 분석하여 **50 kWh 미만 세대**를 자동으로 추출합니다.")
     st.markdown("---")
     st.markdown("🛠 **지원 양식**\n- 제이하임\n- 한일베라체\n- 벨라시티\n- 연동드림아이\n- 힐튼 / 엠제이벤처\n- 좌우 병렬형 검침표")
 
-# CSS 클래스가 적용되도록 HTML 태그로 타이틀 및 서브타이틀 출력
+# ==========================================
+# 🖥️ 메인 화면 영역 (결과 출력)
+# ==========================================
 st.markdown('<p class="main-title">⚡ 전기사용량 50 미만 세대 자동 추출 시스템 (고속 처리 모드)</p>', unsafe_allow_html=True)
 st.markdown('<p class="sub-title">제이하임, 한일베라체, 벨라시티, 연동드림아이, 힐튼, 엠제이벤처 및 좌우 병렬형 검침표 양식을 고속으로 분석합니다.</p>', unsafe_allow_html=True)
 
@@ -455,8 +467,8 @@ def parse_excel_cached(file_hash, file_bytes, filename):
 
     return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
-uploaded_files = st.file_uploader("엑셀 파일(.xlsx, .xls)들을 선택하세요 (다중 선택 가능)", type=["xlsx", "xls"], accept_multiple_files=True)
 
+# 메인 화면 처리 로직
 if uploaded_files:
     results = {}
     selected_sheets_info = {}
@@ -503,3 +515,5 @@ if uploaded_files:
                 )
             else:
                 st.success("해당 파일에는 50 미만 세대가 없습니다.")
+else:
+    st.info("👈 왼쪽 사이드바에서 분석할 엑셀 파일들을 업로드해 주세요.")
