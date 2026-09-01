@@ -40,7 +40,7 @@ with st.sidebar:
 # ==========================================
 # 🖥️ 메인 화면 영역 (결과 출력)
 # ==========================================
-st.markdown('<p class="main-title">⚡ 전기사용량 50 미만 세대 자동 검색 시스템</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-title" style="font-size: 40px;">⚡ 전기사용량 50 미만 세대 자동 검색 시스템</p>', unsafe_allow_html=True)
 st.markdown('<p class="sub-title">제이하임, 한일베라체, 벨라시티, 연동드림아이, 힐튼, 엠제이벤처 및 좌우 병렬형 검침표 양식을 고속으로 분석합니다.</p>', unsafe_allow_html=True)
 
 def clean_num(val):
