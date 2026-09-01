@@ -6,7 +6,7 @@
     letter-spacing: -0.5px;
 }
 
-/* 서브 타이틀 스타일 (다크모드/라이트모드 자동 대응) */
+/* 서브 타이틀 스타일 */
 .sub-title {
     font-size: 1rem;
     color: var(--text-color);
@@ -14,15 +14,23 @@
     margin-bottom: 2rem;
 }
 
-/* 스트림릿 다크/라이트 테마에 맞춘 사이드바 및 본문 기본 가독성 보완 */
+/* 스트림릿 다크/라이트 테마에 맞춘 사이드바 가독성 보완 */
 [data-testid="stSidebar"] {
     background-color: var(--secondary-background-color);
 }
 
-/* 다크모드에서 텍스트 가독성 최적화 */
 [data-testid="stSidebar"] p, 
 [data-testid="stSidebar"] span, 
-[data-testid="stSidebar"] label, 
-[data-testid="stSidebar"] markdown {
+[data-testid="stSidebar"] label {
     color: var(--text-color);
+}
+
+/* 📌 파일 업로드 영역 박스 디자인 (다크/라이트 모드 공통 적용) */
+[data-testid="stFileUploader"] {
+    background-color: rgba(128, 128, 128, 0.08); /* 테마에 따라 은은하게 어우러지는 투명 배경 */
+    border: 1px dashed rgba(128, 128, 128, 0.4); /* 점선 테두리로 영역 구분 */
+    border-radius: 10px;
+    padding: 15px;
+    margin-top: 5px;
+    margin-bottom: 10px;
 }
