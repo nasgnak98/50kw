@@ -1,34 +1,28 @@
-/* 전체 폰트 및 배경 설정 */
-.main {
-    background-color: #F8FAFC;
-    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
-}
-
-/* 메인 타이틀 커스텀 */
+/* 메인 타이틀 스타일 */
 .main-title {
     font-size: 2.2rem;
-    font-weight: 700;
-    color: #1E293B;
-    margin-bottom: 0.2rem;
+    font-weight: 800;
+    margin-bottom: 0.3rem;
+    letter-spacing: -0.5px;
 }
 
-/* 서브 타이틀 커스텀 */
+/* 서브 타이틀 스타일 (다크모드/라이트모드 자동 대응) */
 .sub-title {
-    font-size: 1.05rem;
-    color: #64748B;
+    font-size: 1rem;
+    color: var(--text-color);
+    opacity: 0.75;
     margin-bottom: 2rem;
 }
 
-/* Streamlit 기본 메트릭 박스 디자인 개선 */
-div[data-testid="stMetric"] {
-    background-color: #FFFFFF;
-    padding: 15px;
-    border-radius: 10px;
-    border: 1px solid #E2E8F0;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+/* 스트림릿 다크/라이트 테마에 맞춘 사이드바 및 본문 기본 가독성 보완 */
+[data-testid="stSidebar"] {
+    background-color: var(--secondary-background-color);
 }
 
-/* 사이드바 스타일링 포인트 */
-section[data-testid="stSidebar"] {
-    background-color: #F1F5F9;
+/* 다크모드에서 텍스트 가독성 최적화 */
+[data-testid="stSidebar"] p, 
+[data-testid="stSidebar"] span, 
+[data-testid="stSidebar"] label, 
+[data-testid="stSidebar"] markdown {
+    color: var(--text-color);
 }
