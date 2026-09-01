@@ -461,8 +461,8 @@ def parse_excel_cached(file_hash, file_bytes, filename):
 
                 sheet_records.append({
                     '동': target_dong,
-                    '구분/호수': str_ho,
-                    '사용량(kWh)': use_num
+                    '호수': str_ho,
+                    '사용량(kw)': use_num
                 })
 
     return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
