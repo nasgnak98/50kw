@@ -18,7 +18,7 @@ def load_css(file_name="style.css"):
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 # CSS 적용 실행
-load_css("style.css")
+local_css("assets/style.css")
 
 st.title("⚡ 전기사용량 50 미만 세대 자동 추출 시스템 (고속 처리 모드)")
 st.markdown("제이하임, 한일베라체, 벨라시티, 연동드림아이, 힐튼, 엠제이벤처 및 좌우 병렬형 검침표 양식을 고속으로 분석합니다.")
