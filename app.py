@@ -423,7 +423,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
         h_clean = h_text.replace(" ", "")
         if '동' in h_clean and not any(k in h_clean for k in ['동계', '하계', '부하', '사용량', '지역', '지침', '전월']):
             dong_cols.append(c)
-        if any(k in h_clean for k in ['호실', '호수', '세대', '구분', '호(구분)']) and not any(k in h_clean for k in ['사용량', '전월', '지침']):
+        if any(k in h_clean for k in ['호실', '호수', '세대', '구분', '호(구분)', '호']) and not any(k in h_clean for k in ['사용량', '전월', '지침']):
             ho_cols.append(c)
         if any(k in h_clean for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량', '전기사용량']) and not any(k in h_clean for k in ['전월사용', '전월지침', '시작지침']):
             use_cols.append(c)
