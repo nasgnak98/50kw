@@ -126,7 +126,7 @@ def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
     except Exception:
         pass
 
-    # 3. Pandas를 활용한 한셀 수식/스타일 안전 로딩
+    # 3. Pandas를 활용한 한셀 수식/스타일 안전 로딩 (한셀 호환성 전처리)
     try:
         xls = pd.ExcelFile(io.BytesIO(file_bytes), engine='openpyxl')
         for sheet_name in xls.sheet_names:
@@ -139,7 +139,7 @@ def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
     except Exception:
         pass
 
-    # 4. 표준 openpyxl Fallback
+    # 4. 표준 openpyxl Fallback (수식 및 예외 처리 강화)
     if not pyxl_wb.sheetnames:
         pyxl_wb = Workbook()
         pyxl_wb.remove(pyxl_wb.active)
@@ -287,7 +287,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
-    # [2] 한일베라체 및 중문오션클라우드 공용 전용 파서 (동일 서식)
+    # [2] 한일베라체 및 중문오션클라우드 공용 전용 파서 (동일 서식 키워드 통합)
     if any(k in filename for k in ['한일베라체', '한일', '중문오션클라우드', '오션클라우드', '중문']):
         for r in range(5, max_r + 1):
             dong_val = ws.cell(r, 2).value
