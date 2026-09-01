@@ -32,7 +32,7 @@ with st.sidebar:
     st.markdown("### 📌 시스템 안내")
     st.markdown("본 프로그램은 공동주택의 전기사용량 검침표 엑셀 파일을 분석하여 **50 kWh 미만 세대**를 자동으로 추출합니다.")
     st.markdown("---")
-    st.markdown("🛠 **지원 양식**\n- 제이하임\n- 한일베라체\n- 벨라시티\n- 연동드림아이\n- 힐튼 / 엠제이벤처\n- 좌우 병렬형 검침표\n- **한셀 호환 양식 (수식 자동 복구 지원)**")
+    st.markdown("🛠 **지원 양식**\n- 제이하임\n- 한일베라체\n- 벨라시티\n- 연동드림아이\n- 힐튼 / 엠제이벤처\n- **한셀 지침 자동 계산 및 정밀 보정 양식**")
 
 st.markdown('<p class="main-title" style="font-size: 40px;">⚡ 전기사용량 50 미만 세대 자동 검색 시스템</p>', unsafe_allow_html=True)
 st.markdown('<p class="sub-title">제이하임, 한일베라체, 벨라시티, 연동드림아이, 힐튼, 엠제이벤처 및 한셀 파일 양식을 고속으로 분석합니다.</p>', unsafe_allow_html=True)
@@ -81,7 +81,7 @@ def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
     pyxl_wb = Workbook()
     pyxl_wb.remove(pyxl_wb.active)
 
-    # 1. XML 기반 (구형 MS Office 포맷)
+    # 1. XML 기반 포맷
     if file_bytes.startswith(b'<?xml') or b'urn:schemas-microsoft-com:office:spreadsheet' in file_bytes:
         try:
             root = ET.fromstring(file_bytes)
@@ -121,9 +121,7 @@ def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
         except Exception:
             pass
 
-    # 3. ★ 한셀 및 수식 캐싱 오류 대응: Pandas 원시 로딩을 통한 안전망 구축
-    # openpyxl로 수식을 읽었을 때 None이 떨어지는 한셀 특유의 버그를 방지하기 위해 Pandas ExcelFile 사용 시도
-    pandas_loaded_successfully = False
+    # 3. Pandas를 활용한 한셀 수식/스타일 안전 로딩
     try:
         xls = pd.ExcelFile(io.BytesIO(file_bytes), engine='openpyxl')
         for sheet_name in xls.sheet_names:
@@ -131,30 +129,25 @@ def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
             target_ws = pyxl_wb.create_sheet(title=sheet_name)
             for _, row in df.iterrows():
                 target_ws.append(row.tolist())
-        
         if pyxl_wb.sheetnames:
-            pandas_loaded_successfully = True
+            return pyxl_wb
     except Exception:
         pass
 
-    # 4. Pandas 로딩 실패 시 표준 openpyxl Fallback (수식 무시 및 Raw Data 로딩)
-    if not pandas_loaded_successfully:
+    # 4. 표준 openpyxl Fallback
+    if not pyxl_wb.sheetnames:
         pyxl_wb = Workbook()
         pyxl_wb.remove(pyxl_wb.active)
         try:
-            # data_only=True로 먼저 시도
             wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
             for sheetname in wb.sheetnames:
                 ws = wb[sheetname]
                 target_ws = pyxl_wb.create_sheet(title=sheetname)
                 for r in range(1, ws.max_row + 1):
-                    row_vals = []
-                    for c in range(1, ws.max_column + 1):
-                        row_vals.append(ws.cell(r, c).value)
+                    row_vals = [ws.cell(r, c).value for c in range(1, ws.max_column + 1)]
                     target_ws.append(row_vals)
         except Exception:
             try:
-                # 스타일 에러 시 안전하게 data_only=False로 다시 시도
                 wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=False)
                 for sheetname in wb.sheetnames:
                     ws = wb[sheetname]
@@ -163,18 +156,14 @@ def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
                         row_vals = []
                         for c in range(1, ws.max_column + 1):
                             val = ws.cell(r, c).value
-                            # 한셀에서 수식이 깨졌을 경우를 대비한 최소한의 문자열 변환 시도
-                            if str(val).startswith('='):
-                                row_vals.append(None) # 계산 불가 수식은 드랍
-                            else:
-                                row_vals.append(val)
+                            row_vals.append(None if str(val).startswith('=') else val)
                         target_ws.append(row_vals)
             except Exception:
                 pass
 
     if not pyxl_wb.sheetnames:
         fallback_ws = pyxl_wb.create_sheet(title="Sheet1")
-        fallback_ws.append(["파일 읽기 실패 또는 한셀/손상된 형식입니다."])
+        fallback_ws.append(["파일 읽기 실패"])
 
     return pyxl_wb
 
@@ -222,17 +211,11 @@ def parse_excel_cached(file_hash, file_bytes, filename):
     best_sheet_name = scored_sheets[0][1]
     best_sheet = wb[best_sheet_name]
 
-    # 시트 이름 점수가 0점일 경우 최적 시트 강제 탐색
     if scored_sheets[0][0] == 0:
         max_score = -1
         for sheetname in wb.sheetnames:
             s = wb[sheetname]
-            # 한셀 로딩으로 인해 빈 셀이 많을 수 있으므로 실질적 데이터 존재 여부 확인
-            valid_cells = 0
-            for row in s.iter_rows(values_only=True):
-                if any(x is not None for x in row):
-                    valid_cells += 1
-                    
+            valid_cells = sum(1 for row in s.iter_rows(values_only=True) if any(x is not None for x in row))
             score = valid_cells
             if any(k in sheetname for k in ['전기', '당월', '금월', '검침', '관리비', '전체', 'sheet1', 'Sheet1']) or len(wb.sheetnames) == 1:
                 score *= 2
@@ -249,31 +232,11 @@ def parse_excel_cached(file_hash, file_bytes, filename):
 
     sheet_records = []
 
-    # === [1] 제이하임 전용 파서 ===
-    if '제이하임' in filename:
-        for r in range(1, max_r + 1):
-            ho_val = ws.cell(r, 1).value
-            use_val = ws.cell(r, 4).value
-            if use_val is None and max_c >= 5:
-                use_val = ws.cell(r, 5).value
-            if ho_val is not None and use_val is not None:
-                str_ho = str(ho_val).strip()
-                if not is_valid_ho(str_ho):
-                    continue
-                use_num = clean_num(use_val)
-                if use_num is not None:
-                    sheet_records.append({'동': '', '호수': str_ho.replace('호', ''), '사용량(kw)': use_num})
-        if sheet_records:
-            return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
-
-    # === [2] 연동드림아이 / 한일베라체 / 벨라시티 / 엠제이벤처 전용 로직 생략 (기존과 동일하게 동작하지만 간소화 표기) ===
-    # (위 기존 코드의 전용 파서들 모두 일반 파서가 한셀 파일에 맞춰진 상태에서 대부분 처리 가능해집니다)
-
-    # === [5] 한셀 대응 하이브리드 일반 파서 (가장 강력한 로직) ===
+    # === 헤더 텍스트 매핑 분석 (최대 20행까지 정밀 스캔) ===
     header_texts = {}
     for c in range(1, max_c + 1):
         col_text_list = []
-        for r in range(1, min(20, max_r + 1)): # 한셀은 헤더가 늦게 시작할 수 있어 20행까지 탐색
+        for r in range(1, min(20, max_r + 1)):
             val = ws.cell(r, c).value
             if val is not None:
                 s_val = str(val).strip()
@@ -281,44 +244,68 @@ def parse_excel_cached(file_hash, file_bytes, filename):
                     col_text_list.append(s_val)
         header_texts[c] = " ".join(col_text_list)
 
-    dong_cols, ho_cols, use_cols = [], [], []
+    dong_cols, ho_cols, use_cols, prev_cols, curr_cols = [], [], [], [], []
     for c, h_text in header_texts.items():
         h_clean = h_text.replace(" ", "")
         if '동' in h_clean and not any(k in h_clean for k in ['동계', '하계', '부하', '사용량', '지역', '지침', '전월']):
             dong_cols.append(c)
         if any(k in h_clean for k in ['호실', '호수', '세대', '구분', '호(구분)', '호']) and not any(k in h_clean for k in ['사용량', '전월', '지침', '단가']):
             ho_cols.append(c)
-        if any(k in h_clean for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량', '전기사용량', '46248']) and not any(k in h_clean for k in ['전월사용', '전월지침', '시작지침', '46218']):
+        if any(k in h_clean for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량', '전기사용량']):
             use_cols.append(c)
+        if any(k in h_clean for k in ['전월지침', '기초지침', '전월', '시작지침']):
+            prev_cols.append(c)
+        if any(k in h_clean for k in ['당월지침', '현재지침', '당월', '종료지침', '금월지침']):
+            curr_cols.append(c)
 
     has_dong_col = len(dong_cols) > 0
     d_col = dong_cols[0] if has_dong_col else None
-    
-    # 만약 호수 열을 못 찾았으면 기본적으로 1번이나 2번 열을 호수 열로 가정
     h_col = ho_cols[0] if ho_cols else (2 if has_dong_col else 1)
     
-    # 만약 사용량 열을 특정 키워드로 못 찾았다면 '지침' 간의 차이 혹은 가장 우측 숫자 열을 탐색 (한셀 수식 방어)
-    if not use_cols:
-        # 헤더 명확성이 떨어지는 경우, 숫자 데이터 패턴으로 사용량 열 추적
+    # 사용량 열 확정 (만약 키워드로 못 찾았다면 전월지침/당월지침 차이 계산 또는 숫자 분포 분석)
+    u_col = use_cols[0] if use_cols else None
+    p_col = prev_cols[0] if prev_cols else None
+    c_col = curr_cols[0] if curr_cols else None
+
+    # 만약 사용량 열이 명확하지 않고 당월/전월 지침 열이 있다면 직접 지침 간 차이를 계산하기 위한 후보 설정
+    if u_col is None and p_col and c_col:
+        # 지침 간의 차이를 사용량으로 간주
+        pass
+    elif u_col is None:
+        # 숫자가 가장 많이 들어있는 열 중 호수 열 다음의 적절한 열 탐색 (사용량 값은 보통 0~1000 사이)
         best_u_col = None
-        max_num_count = 0
+        min_avg_val = float('inf')
         for c in range(h_col + 1, max_c + 1):
-            num_count = 0
+            vals = []
             for r in range(1, min(50, max_r + 1)):
-                if clean_num(ws.cell(r, c).value) is not None:
-                    num_count += 1
-            if num_count > max_num_count:
-                max_num_count = num_count
-                best_u_col = c
-        u_col = best_u_col if best_u_col else max_c
-    else:
-        u_col = use_cols[0]
+                v = clean_num(ws.cell(r, c).value)
+                if v is not None and v < 5000: # 지침처럼 너무 큰 숫자가 아닌 것
+                    vals.append(v)
+            if len(vals) > 5:
+                avg_v = sum(vals) / len(vals)
+                if avg_v < min_avg_val: # 평균값이 가장 작은 열이 보통 '사용량' 열임 (지침은 1만 단위로 큼)
+                    min_avg_val = avg_v
+                    best_u_col = c
+        u_col = best_u_col if best_u_col else (6 if max_c >= 6 else max_c)
 
     current_dong = ""
     for r in range(1, max_r + 1):
         raw_dong = ws.cell(r, d_col).value if (has_dong_col and d_col) else None
-        raw_ho = ws.cell(r, h_col).value if h_col else None
-        raw_use = ws.cell(r, u_col).value if u_col else None
+        raw_ho = ws.cell(r, h_col).value if (h_col <= max_c) else None
+        
+        # 사용량 값 추출 (u_col 직접 읽기 또는 당월지침 - 전월지침 계산)
+        raw_use = None
+        if u_col and u_col <= max_c:
+            raw_use = ws.cell(r, u_col).value
+            
+        use_num = clean_num(raw_use)
+        
+        # 만약 직접 읽은 사용량이 None이거나 너무 크다면 (지침을 잘못 읽었을 경우), 당월 - 전월로 계산 시도
+        if (use_num is None or use_num > 5000) and p_col and c_col and p_col <= max_c and c_col <= max_c:
+            p_val = clean_num(ws.cell(r, p_col).value)
+            c_val = clean_num(ws.cell(r, c_col).value)
+            if p_val is not None and c_val is not None and c_val >= p_val:
+                use_num = c_val - p_val
 
         if has_dong_col and d_col and raw_dong is not None and str(raw_dong).strip() != '':
             str_d = str(raw_dong).strip()
@@ -329,33 +316,20 @@ def parse_excel_cached(file_hash, file_bytes, filename):
             elif '동' in str_d:
                 current_dong = str_d
 
-        if raw_ho is not None and raw_use is not None:
+        if raw_ho is not None and use_num is not None:
             str_ho = str(raw_ho).strip()
             if not is_valid_ho(str_ho):
                 continue
 
-            use_num = clean_num(raw_use)
-            # 한셀 수식이 깨져서 NaN/None인 경우를 방지하기 위해 강제 할당 확인
-            if use_num is not None:
-                target_dong = str(current_dong).replace('동', '').strip() if has_dong_col else ''
-                if has_dong_col and (not target_dong or any(k in target_dong for k in ['계', '동계', '하계', '난방', '온수'])):
-                    continue
+            target_dong = str(current_dong).replace('동', '').strip() if has_dong_col else ''
+            if has_dong_col and (not target_dong or any(k in target_dong for k in ['계', '동계', '하계', '난방', '온수'])):
+                continue
 
-                sheet_records.append({
-                    '동': target_dong,
-                    '호수': str_ho,
-                    '사용량(kw)': use_num
-                })
-            
-            # 만약 u_col에서 값을 못 읽었을 때, 한 칸 오른쪽 열에 값이 밀려있는 한셀 고유의 병합셀 밀림 현상 방어
-            elif use_num is None and u_col + 1 <= max_c:
-                fallback_use = clean_num(ws.cell(r, u_col + 1).value)
-                if fallback_use is not None:
-                    sheet_records.append({
-                        '동': target_dong,
-                        '호수': str_ho,
-                        '사용량(kw)': fallback_use
-                    })
+            sheet_records.append({
+                '동': target_dong,
+                '호수': str_ho.replace('호', ''),
+                '사용량(kw)': use_num
+            })
 
     return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
@@ -372,6 +346,7 @@ if uploaded_files:
             selected_sheets_info[file.name] = detected_sheet
 
             if not df_parsed.empty:
+                # 50 미만 세대 추출 (0 포함, 단 0보다 크고 50 미만인 세대들도 정확히 포착)
                 df_under_50 = df_parsed[df_parsed['사용량(kw)'] < 50].copy()
                 df_under_50.reset_index(drop=True, inplace=True)
                 df_under_50.index = df_under_50.index + 1
@@ -404,6 +379,6 @@ if uploaded_files:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             else:
-                st.success("해당 파일에는 50 미만 세대가 없습니다. (또는 수식이 없는 비어있는 파일입니다.)")
+                st.success("해당 파일에는 50 미만 세대가 없습니다.")
 else:
     st.info("👈 왼쪽 사이드바에서 분석할 엑셀 파일들을 업로드해 주세요.")
