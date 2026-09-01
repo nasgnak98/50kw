@@ -35,13 +35,13 @@ with st.sidebar:
     st.markdown("### 📌 시스템 안내")
     st.markdown("본 프로그램은 공동주택의 전기사용량 검침표 엑셀 파일을 분석하여 **50 kWh 미만 세대**를 자동으로 추출합니다.")
     st.markdown("---")
-    st.markdown("🛠 **지원 양식**\n- 중문오션클라우드 (한일베라체 연동)\n- 제이하임\n- 한일베라체\n- 벨라시티\n- 연동드림아이\n- 힐튼 / 엠제이벤처\n- 좌우 병렬형 검침표")
+    st.markdown("🛠 **지원 양식**\n- 벨라시티프리미어 / 벨라시티\n- 일도더팰리스\n- 중문오션클라우드 (한일베라체 연동)\n- 제이하임\n- 한일베라체\n- 연동드림아이\n- 힐튼 / 엠제이벤처\n- 좌우 병렬형 검침표")
 
 # ==========================================
 # 🖥️ 메인 화면 영역 (결과 출력)
 # ==========================================
 st.markdown('<p class="main-title" style="font-size: 40px;">⚡ 전기사용량 50 미만 세대 자동 검색 시스템</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">중문오션클라우드, 제이하임, 한일베라체, 벨라시티, 연동드림아이, 힐튼, 엠제이벤처 및 좌우 병렬형 검침표 양식을 고속으로 분석합니다.</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">벨라시티, 일도더팰리스, 중문오션클라우드, 제이하임, 한일베라체, 연동드림아이, 힐튼, 엠제이벤처 검침표 양식을 고속으로 분석합니다.</p>', unsafe_allow_html=True)
 
 def clean_num(val):
     if val is None:
@@ -126,7 +126,7 @@ def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
     except Exception:
         pass
 
-    # 3. Pandas를 활용한 한셀 수식/스타일 안전 로딩 (한셀 호환성 전처리)
+    # 3. Pandas를 활용한 한셀 수식/스타일 안전 로딩
     try:
         xls = pd.ExcelFile(io.BytesIO(file_bytes), engine='openpyxl')
         for sheet_name in xls.sheet_names:
@@ -139,7 +139,7 @@ def load_any_excel_to_openpyxl_cached(file_hash, file_bytes, filename):
     except Exception:
         pass
 
-    # 4. 표준 openpyxl Fallback (수식 및 예외 처리 강화)
+    # 4. 표준 openpyxl Fallback
     if not pyxl_wb.sheetnames:
         pyxl_wb = Workbook()
         pyxl_wb.remove(pyxl_wb.active)
@@ -240,7 +240,52 @@ def parse_excel_cached(file_hash, file_bytes, filename):
     # 🔍 [전용 파서들 시작]
     # ==========================================================
 
-    # [0] 제이하임 전용 파서
+    # [0] 벨라시티프리미어 / 일도더팰리스 및 공용 병합 표 양식 전용 유연 파서
+    header_idx = None
+    for r in range(1, min(15, max_r + 1)):
+        row_vals = [str(ws.cell(r, c).value or '').strip() for c in range(1, max_c + 1)]
+        if '동' in row_vals and '호' in row_vals and '사용량' in row_vals:
+            header_idx = r
+            break
+
+    if header_idx is not None:
+        d_col, h_col, u_col = None, None, None
+        for c in range(1, max_c + 1):
+            val_s = str(ws.cell(header_idx, c).value or '').strip()
+            if val_s == '동':
+                d_col = c
+            elif val_s == '호':
+                h_col = c
+            elif val_s == '사용량':
+                u_col = c
+
+        if h_col and u_col:
+            current_dong = ""
+            for r in range(header_idx + 1, max_r + 1):
+                d_val = ws.cell(r, d_col).value if d_col else None
+                h_val = ws.cell(r, h_col).value
+                u_val = ws.cell(r, u_col).value
+
+                if d_val is not None and str(d_val).strip() != '':
+                    d_str = str(d_val).strip().replace('.0', '')
+                    if d_str not in ['nan', 'None']:
+                        current_dong = d_str
+
+                if h_val is not None and u_val is not None:
+                    str_ho = str(h_val).strip().replace('.0', '').replace('호', '')
+                    if not is_valid_ho(str_ho):
+                        continue
+                    u_num = clean_num(u_val)
+                    if u_num is not None:
+                        sheet_records.append({
+                            '동': current_dong.replace('동', ''),
+                            '호수': str_ho,
+                            '사용량(kw)': u_num
+                        })
+            if sheet_records:
+                return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
+
+    # [1] 제이하임 전용 파서
     if '제이하임' in filename:
         for r in range(1, max_r + 1):
             ho_val = ws.cell(r, 1).value
@@ -261,7 +306,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
-    # [1] 연동드림아이 전용 파서
+    # [2] 연동드림아이 전용 파서
     is_yeonmok_format = False
     for r in range(1, min(5, max_r + 1)):
         row_str = " ".join([str(ws.cell(r, c).value or '') for c in range(1, min(5, max_c + 1))])
@@ -287,7 +332,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
-    # [2] 한일베라체 및 중문오션클라우드 공용 전용 파서 (동일 서식 키워드 통합)
+    # [3] 한일베라체 및 중문오션클라우드 공용 파서
     if any(k in filename for k in ['한일베라체', '한일', '중문오션클라우드', '오션클라우드', '중문']):
         for r in range(5, max_r + 1):
             dong_val = ws.cell(r, 2).value
@@ -311,45 +356,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
-    # [2-1] 벨라시티 전용 파서
-    if '벨라시티' in filename:
-        current_dong = ""
-        for r in range(1, max_r + 1):
-            val_d = ws.cell(row=r, column=4).value
-            if val_d is None:
-                val_d = ws.cell(row=r, column=3).value
-
-            val_h = ws.cell(row=r, column=5).value
-            if val_h is None:
-                val_h = ws.cell(row=r, column=4).value
-
-            val_u = ws.cell(row=r, column=9).value
-            if val_u is None and max_c >= 9:
-                for c_alt in range(6, max_c + 1):
-                    cand = ws.cell(row=r, column=c_alt).value
-                    if clean_num(cand) is not None:
-                        val_u = cand
-                        break
-
-            if val_d is not None:
-                s_d = str(val_d).strip().replace('.0', '').replace('동', '')
-                if s_d.isdigit() and int(s_d) < 100:
-                    current_dong = s_d
-
-            if val_h is not None and val_u is not None:
-                str_h = str(val_h).strip().replace('.0', '').replace('호', '')
-                if is_valid_ho(str_h):
-                    u_num = clean_num(val_u)
-                    if u_num is not None:
-                        sheet_records.append({
-                            '동': current_dong,
-                            '호수': str_h,
-                            '사용량(kw)': u_num
-                        })
-        if sheet_records:
-            return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
-
-    # [2-2] 엠제이벤처오름 전용 파서
+    # [4] 엠제이벤처오름 전용 파서
     is_mj_file = any(k in filename for k in ['엠제이', '벤처오름', '오름'])
     if not is_mj_file:
         for r in range(1, min(5, max_r + 1)):
@@ -395,7 +402,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
-    # [3] 좌우 병렬 반복형 구조 파서
+    # [5] 좌우 병렬 반복형 구조 파서
     for c in range(1, max_c + 1):
         h_val = ws.cell(row=1, column=c).value
         if h_val is not None and ('동' in str(h_val)):
@@ -428,7 +435,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
     if sheet_records:
         return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
-    # [4] 힐튼 등 가로 블록 반복형 구조 파서
+    # [6] 힐튼 등 가로 블록 반복형 구조 파서
     for header_row in range(1, max_r + 1):
         for c_start in range(1, max_c + 1, 4):
             val = ws.cell(row=header_row, column=c_start).value
@@ -454,7 +461,7 @@ def parse_excel_cached(file_hash, file_bytes, filename):
     # 🔍 [전용 파서들 끝]
     # ==========================================================
 
-    # [5] 일반적인 단일 표 구조 파서 (기본 폴백)
+    # [7] 일반적인 단일 표 구조 파서 (기본 폴백)
     header_texts = {}
     for c in range(1, max_c + 1):
         col_text_list = []
