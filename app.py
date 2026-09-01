@@ -35,7 +35,7 @@ with st.sidebar:
     st.markdown("### 📌 시스템 안내")
     st.markdown("본 프로그램은 공동주택의 전기사용량 검침표 엑셀 파일을 분석하여 **50 kWh 미만 세대**를 자동으로 추출합니다.")
     st.markdown("---")
-    st.markdown("🛠 **지원 양식**\n- 중문오션클라우드\n- 제이하임\n- 한일베라체\n- 벨라시티\n- 연동드림아이\n- 힐튼 / 엠제이벤처\n- 좌우 병렬형 검침표")
+    st.markdown("🛠 **지원 양식**\n- 중문오션클라우드 (한일베라체 연동)\n- 제이하임\n- 한일베라체\n- 벨라시티\n- 연동드림아이\n- 힐튼 / 엠제이벤처\n- 좌우 병렬형 검침표")
 
 # ==========================================
 # 🖥️ 메인 화면 영역 (결과 출력)
@@ -237,95 +237,6 @@ def parse_excel_cached(file_hash, file_bytes, filename):
     # 🔍 [전용 파서들 시작]
     # ==========================================================
 
-    # [-1] 중문오션클라우드 전용 파서 (개선된 버전)
-    is_ocean_cloud = '중문오션클라우드' in filename or '오션클라우드' in filename or '중문' in filename
-    if not is_ocean_cloud:
-        for r in range(1, min(10, max_r + 1)):
-            row_text = "".join([str(ws.cell(r, c).value or '') for c in range(1, max_c + 1)])
-            if '중문오션클라우드' in row_text or '오션클라우드' in row_text or '중문' in row_text:
-                is_ocean_cloud = True
-                break
-
-    if is_ocean_cloud:
-        h_col, u_col, d_col = None, None, None
-        header_row = 1
-        
-        # 헤더 찾기 로직 정교화
-        for r in range(1, min(15, max_r + 1)):
-            for c in range(1, max_c + 1):
-                val_s = str(ws.cell(r, c).value or '').strip()
-                if any(k in val_s for k in ['호실', '호', '세대', '구분']) and not any(k in val_s for k in ['사용량', '전월', '지침', '평균']):
-                    if h_col is None:
-                        h_col = c
-                if any(k in val_s for k in ['사용량', '금월사용', '계기사용량', '당월사용량', '사용', '당월']):
-                    if u_col is None and not any(k in val_s for k in ['전월', '지침', '평균']):
-                        u_col = c
-                if '동' in val_s and not any(k in val_s for k in ['동계', '하계', '사용량', '지침']):
-                    if d_col is None:
-                        d_col = c
-            if h_col and u_col:
-                header_row = r
-                break
-                
-        # 명시적 헤더를 찾지 못한 경우 데이터 패턴(호실 및 사용량 숫자)으로 역추적
-        if not h_col or not u_col:
-            for c in range(1, max_c + 1):
-                valid_ho_count = 0
-                valid_use_count = 0
-                for r in range(1, min(30, max_r + 1)):
-                    v = ws.cell(r, c).value
-                    if v is not None:
-                        s = str(v).strip().replace('.0', '')
-                        if is_valid_ho(s):
-                            valid_ho_count += 1
-                        num = clean_num(v)
-                        if num is not None and 0 <= num < 5000:
-                            valid_use_count += 1
-                if valid_ho_count >= 3 and h_col is None:
-                    h_col = c
-                elif valid_use_count >= 5 and u_col is None and c != h_col:
-                    u_col = c
-
-        if not h_col:
-            h_col = 2 if max_c >= 2 else 1
-        if not u_col:
-            u_col = 6 if max_c >= 6 else min(max_c, 3)
-
-        current_dong = ""
-        start_row = (header_row + 1) if 'header_row' in locals() else 2
-        for r in range(start_row, max_r + 1):
-            if d_col:
-                val_d = ws.cell(r, d_col).value
-                if val_d is not None:
-                    s_d = str(val_d).strip().replace('.0', '').replace('동', '')
-                    if s_d.isdigit() and int(s_d) < 100:
-                        current_dong = s_d
-
-            ho_val = ws.cell(r, h_col).value
-            use_val = ws.cell(r, u_col).value
-
-            # 사용량 열 값이 없거나 숫자가 아닐 경우 해당 행의 다른 열에서 유효한 사용량 숫자 탐색
-            u_num = clean_num(use_val)
-            if u_num is None:
-                for alt_c in range(1, max_c + 1):
-                    if alt_c == h_col or alt_c == d_col:
-                        continue
-                    cand_num = clean_num(ws.cell(r, alt_c).value)
-                    if cand_num is not None and 0 <= cand_num < 10000:
-                        u_num = cand_num
-                        break
-
-            if ho_val is not None and u_num is not None:
-                str_ho = str(ho_val).strip().replace('.0', '').replace('호', '')
-                if is_valid_ho(str_ho):
-                    sheet_records.append({
-                        '동': current_dong,
-                        '호수': str_ho,
-                        '사용량(kw)': u_num
-                    })
-        if sheet_records:
-            return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
-
     # [0] 제이하임 전용 파서
     if '제이하임' in filename:
         for r in range(1, max_r + 1):
@@ -373,8 +284,8 @@ def parse_excel_cached(file_hash, file_bytes, filename):
         if sheet_records:
             return finalize_dataframe(pd.DataFrame(sheet_records)), best_sheet_name
 
-    # [2] 한일베라체 전용 파서
-    if '한일베라체' in filename or '한일' in filename:
+    # [2] 한일베라체 및 중문오션클라우드 공용 전용 파서 (동일 서식)
+    if any(k in filename for k in ['한일베라체', '한일', '중문오션클라우드', '오션클라우드', '중문']):
         for r in range(5, max_r + 1):
             dong_val = ws.cell(r, 2).value
             ho_val = ws.cell(r, 3).value
