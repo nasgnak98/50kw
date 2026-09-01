@@ -33,14 +33,14 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### 📌 시스템 안내")
-    st.markdown("본 프로그램은 아파트 및 집합건물의 전기사용량 검침표 엑셀 파일을 분석하여 **50 kWh 미만 세대**를 자동으로 추출합니다.")
+    st.markdown("본 프로그램은 공동주택의 전기사용량 검침표 엑셀 파일을 분석하여 **50 kWh 미만 세대**를 자동으로 추출합니다.")
     st.markdown("---")
     st.markdown("🛠 **지원 양식**\n- 제이하임\n- 한일베라체\n- 벨라시티\n- 연동드림아이\n- 힐튼 / 엠제이벤처\n- 좌우 병렬형 검침표")
 
 # ==========================================
 # 🖥️ 메인 화면 영역 (결과 출력)
 # ==========================================
-st.markdown('<p class="main-title">⚡ 전기사용량 50 미만 세대 자동 추출 시스템 (고속 처리 모드)</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-title">⚡ 전기사용량 50 미만 세대 자동 검색 시스템</p>', unsafe_allow_html=True)
 st.markdown('<p class="sub-title">제이하임, 한일베라체, 벨라시티, 연동드림아이, 힐튼, 엠제이벤처 및 좌우 병렬형 검침표 양식을 고속으로 분석합니다.</p>', unsafe_allow_html=True)
 
 def clean_num(val):
