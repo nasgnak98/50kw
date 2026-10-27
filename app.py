@@ -565,6 +565,10 @@ def parse_with_config(grid, cfg):
         for ridx in range(cfg['start'], len(grid)):
             r = grid[ridx]
 
+            # 수동으로 열을 지정한 경우에도 통계/요약 행은 제외
+            if is_summary_row(r):
+                continue
+
             def get(c):
                 if c is None:
                     return None
@@ -580,8 +584,9 @@ def parse_with_config(grid, cfg):
     return finalize(out, grid)
 
 
-def manual_ui(fkey, grids, default_sheet):
-    st.warning("자동 인식에 실패했습니다. 미리보기를 보고 열을 직접 선택하세요.")
+def manual_ui(fkey, grids, default_sheet, show_warning=True):
+    if show_warning:
+        st.warning("자동 인식에 실패했습니다. 미리보기를 보고 열을 직접 선택하세요.")
     names = list(grids)
     sheet = st.selectbox("시트", names, index=names.index(default_sheet) if default_sheet in names else 0, key=f"sh_{fkey}")
     grid = grids[sheet]
@@ -621,6 +626,7 @@ if files:
 
             cfg = st.session_state.get(f"cfg_{fkey}")
             sheet = pname = None
+
             if cfg:
                 sheet, pname = cfg['sheet'], '수동 설정'
                 df_all = parse_with_config(grids[sheet], cfg)
@@ -629,15 +635,37 @@ if files:
                     st.rerun()
             else:
                 sheet, pname, df_all = auto_parse_file(grids, f.name)
-                if df_all.empty:
-                    new_cfg = manual_ui(fkey, grids, order_sheets(grids)[0])
+
+                # 자동 인식이 실패했거나 결과가 의심스러워도 수동 설정을 항상 노출한다.
+                auto_failed = df_all.empty
+                if auto_failed:
+                    st.warning(
+                        "자동 인식으로 세대 데이터를 찾지 못했습니다. "
+                        "아래에서 시트와 열을 직접 지정해 주세요."
+                    )
+
+                with st.expander(
+                    "🛠️ 열 직접 선택 / 수동으로 다시 분석",
+                    expanded=auto_failed
+                ):
+                    st.caption(
+                        "자동 인식 결과가 없거나 정확하지 않다면 "
+                        "시트, 호수 열, 사용량 열, 동 열, 데이터 시작 행을 직접 지정하세요."
+                    )
+                    new_cfg = manual_ui(
+                        fkey, grids, sheet or order_sheets(grids)[0],
+                        show_warning=False
+                    )
                     if new_cfg:
                         st.session_state[f"cfg_{fkey}"] = new_cfg
                         st.rerun()
-                    continue
 
             if df_all.empty:
-                st.error("선택한 설정으로 추출된 세대가 없습니다. 열/시작 행을 다시 확인하세요.")
+                st.error(
+                    "현재 설정으로 추출된 세대가 없습니다. "
+                    "자동 인식에 실패했다면 위의 열 직접 선택 기능을 사용하고, "
+                    "수동 설정이라면 열과 데이터 시작 행을 다시 확인하세요."
+                )
                 continue
 
             st.info(f"📌 분석 시트: `{sheet}`  |  사용된 파서: **{pname}**")
@@ -651,16 +679,7 @@ if files:
 
             with st.expander("인식 결과 검증 (전체 세대 앞/뒤 5건)"):
                 st.dataframe(pd.concat([df_all.head(5), df_all.tail(5)]), use_container_width=True)
-                st.caption("호수·사용량이 실제 엑셀과 맞는지 확인하세요. 틀리면 파일을 다시 올리지 말고 '수동 설정'을 사용하세요.")
-                if not cfg and st.button("이 파일을 수동 설정으로 다시 지정", key=f"force_{fkey}"):
-                    st.session_state[f"force_{fkey}"] = True
-
-            if st.session_state.get(f"force_{fkey}") and not cfg:
-                new_cfg = manual_ui(fkey, grids, sheet)
-                if new_cfg:
-                    st.session_state[f"cfg_{fkey}"] = new_cfg
-                    st.session_state.pop(f"force_{fkey}", None)
-                    st.rerun()
+                st.caption("호수·사용량이 실제 엑셀과 맞는지 확인하세요. 결과가 틀리면 위의 '열 직접 선택 / 수동으로 다시 분석'을 이용하세요.")
 
             if df_under.empty:
                 st.success("기준 미만 세대가 없습니다.")
