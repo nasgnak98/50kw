@@ -143,23 +143,41 @@ def load_grids(file_bytes):
         return {}
 
 
-def month_score(sheet_name):
-    m = re.search(r'(\d{1,2})\s*월', sheet_name)
-    y = re.search(r'(20\d{2})', sheet_name)
-    if not m:
-        return 0
-    return (int(y.group(1)) if y else datetime.now().year) * 12 + int(m.group(1))
+def assign_sheet_periods(names):
+    """시트 이름 목록 → {시트명: 연*12+월}. 연도 없는 시트는 앞 시트의 연도를 이어받음"""
+    res, cur_year, prev_m = {}, None, None
+    for n in names:
+        mm = re.search(r'(?<!\d)(\d{1,2})\s*월', n)
+        if not mm or not 1 <= int(mm.group(1)) <= 12:
+            continue
+        month = int(mm.group(1))
+        y4 = re.search(r'(20\d{2})', n)
+        y2 = re.search(r'(?<!\d)(\d{2})\s*[.\-/년]\s*\d{1,2}\s*월', n)
+        if y4:
+            year = int(y4.group(1))
+        elif y2:
+            year = 2000 + int(y2.group(1))
+        elif cur_year is None:
+            year = datetime.now().year
+        else:
+            # 12월 → 1월처럼 6개월 이상 줄어들면 해가 바뀐 것으로 판단
+            year = cur_year + (1 if prev_m is not None and prev_m - month >= 6 else 0)
+        res[n] = year * 12 + month
+        cur_year, prev_m = year, month
+    return res
 
 
 def order_sheets(grids):
-    """파싱 시도 순서: 최근 월 시트 → 그 외 큰 시트 순"""
+    """파싱 시도 순서: 최근 월 시트 → (월 표기 없는 시트는) 큰 시트 순"""
+    periods = assign_sheet_periods(list(grids))
+
     def size_score(name):
         r, c = grid_dims(grids[name])
         s = r * c
         if any(k in name for k in ('전기', '당월', '금월', '검침', '관리비', '전체')) or len(grids) == 1:
             s *= 2
         return s
-    return sorted(grids, key=lambda n: (month_score(n), size_score(n)), reverse=True)
+    return sorted(grids, key=lambda n: (periods.get(n, 0), size_score(n)), reverse=True)
 
 
 # ───────────────────────── 결과 정리 ─────────────────────────
