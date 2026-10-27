@@ -627,6 +627,9 @@ if files:
             cfg = st.session_state.get(f"cfg_{fkey}")
             sheet = pname = None
 
+            # 파일명에 의존하지 않고 모든 파일에 동일한 검증 원칙을 적용합니다.
+            # 자동 파서가 행을 반환했다는 사실만으로 정상 인식이라고 간주하지 않습니다.
+
             if cfg:
                 sheet, pname = cfg['sheet'], '수동 설정'
                 df_all = parse_with_config(grids[sheet], cfg)
@@ -636,21 +639,40 @@ if files:
             else:
                 sheet, pname, df_all = auto_parse_file(grids, f.name)
 
-                # 자동 인식이 실패했거나 결과가 의심스러워도 수동 설정을 항상 노출한다.
+                # 자동 인식은 후보 결과일 뿐입니다. 사용자가 원본과 대조해 확인하기 전에는
+                # 최종 추출 결과나 기준 미만 세대 목록으로 표시하지 않습니다.
                 auto_failed = df_all.empty
                 if auto_failed:
                     st.warning(
-                        "자동 인식으로 세대 데이터를 찾지 못했습니다. "
-                        "아래에서 시트와 열을 직접 지정해 주세요."
+                        "자동 인식으로 유효한 세대 데이터를 찾지 못했습니다. "
+                        "자동 결과를 만들지 않았습니다. 아래에서 시트와 열을 직접 지정해 주세요."
                     )
+                else:
+                    st.warning(
+                        "자동 인식 결과는 아직 검증되지 않았습니다. "
+                        "원본 엑셀의 호수와 사용량이 일치하는지 확인하기 전에는 최종 결과로 확정하지 않습니다."
+                    )
+                    st.caption(f"자동 인식 후보: 시트 `{sheet}`, 파서 `{pname}`, 후보 행 {len(df_all)}개")
+                    with st.expander("자동 인식 후보 미리보기 (확정 전)", expanded=True):
+                        st.dataframe(pd.concat([df_all.head(5), df_all.tail(5)]), use_container_width=True)
+                    confirmed = st.checkbox(
+                        "미리보기의 호수와 사용량이 원본 엑셀과 일치하는 것을 확인했습니다.",
+                        key=f"confirm_auto_{fkey}"
+                    )
+                    if not confirmed:
+                        # 자동 후보를 최종 결과처럼 표시하지 않고 수동 설정으로 안내합니다.
+                        df_all = pd.DataFrame()
+                    else:
+                        st.success("자동 인식 결과를 확인했습니다.")
 
                 with st.expander(
                     "🛠️ 열 직접 선택 / 수동으로 다시 분석",
-                    expanded=auto_failed
+                    expanded=(auto_failed or (not st.session_state.get(f"confirm_auto_{fkey}", False)))
                 ):
                     st.caption(
-                        "자동 인식 결과가 없거나 정확하지 않다면 "
-                        "시트, 호수 열, 사용량 열, 동 열, 데이터 시작 행을 직접 지정하세요."
+                        "자동 인식이 실패했거나 후보 결과가 원본과 다르면 "
+                        "시트, 호수 열, 사용량 열, 동 열, 데이터 시작 행을 직접 지정하세요. "
+                        "자동 후보가 일부 행을 반환해도 정확성이 보장되는 것은 아닙니다."
                     )
                     new_cfg = manual_ui(
                         fkey, grids, sheet or order_sheets(grids)[0],
