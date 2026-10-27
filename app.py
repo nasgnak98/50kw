@@ -251,6 +251,70 @@ def finalize(records, grid=None):
 
 
 # ───────────────────────── 양식별 파서 (grid 기반) ─────────────────────────
+def parser_edobella(grid, filename):
+    """이도벨라시티프리미어: 동 | 호 | 가구수 | 빈 열 | 사용량 양식 전용 파서."""
+    compact_name = re.sub(r"\s+", "", str(filename))
+    if "이도벨라시티프리미어" not in compact_name:
+        return []
+
+    max_r, max_c = grid_dims(grid)
+    header_row = None
+    col_map = {}
+
+    # 헤더는 앞부분에서 정확한 셀 값으로 찾습니다.
+    for r in range(1, min(20, max_r) + 1):
+        row_map = {}
+        for c in range(1, max_c + 1):
+            key = re.sub(r"\s+", "", norm_str(cell(grid, r, c)))
+            if key in {"동", "호", "가구수", "사용량"} and key not in row_map:
+                row_map[key] = c
+        if {"동", "호", "가구수", "사용량"}.issubset(row_map):
+            header_row, col_map = r, row_map
+            break
+
+    # 전용 양식의 헤더를 찾지 못했으면 다른 파서로 추측하지 않도록
+    # 이 파일에 대해서는 빈 결과를 반환합니다.
+    if header_row is None:
+        return []
+
+    out = []
+    current_dong = ""
+    for r in range(header_row + 1, max_r + 1):
+        raw_dong = cell(grid, r, col_map["동"])
+        raw_ho = cell(grid, r, col_map["호"])
+        raw_gagu = cell(grid, r, col_map["가구수"])
+        raw_use = cell(grid, r, col_map["사용량"])
+
+        # 빈 행은 무시합니다.
+        if all(v in (None, "") for v in (raw_dong, raw_ho, raw_gagu, raw_use)):
+            continue
+
+        # 동 셀에 값이 있으면 반드시 숫자형 동 번호여야 합니다.
+        # '동계', '합계' 같은 문자가 있으면 이전 동 번호를 이어받지 않고 행 전체를 제외합니다.
+        if raw_dong not in (None, ""):
+            dong_text = norm_str(raw_dong).replace("동", "").strip()
+            if not re.fullmatch(r"\d{1,3}", dong_text):
+                continue
+            current_dong = dong_text
+
+        # 이 양식에서는 실제 세대의 가구수는 1입니다.
+        gagu_num = clean_num(raw_gagu)
+        if gagu_num != 1:
+            continue
+
+        ho_text = norm_str(raw_ho).replace("호", "").strip()
+        if not re.fullmatch(r"\d{1,4}", ho_text) or not is_valid_ho(ho_text):
+            continue
+
+        use_num = clean_num(raw_use)
+        if use_num is None or use_num < 0 or not current_dong:
+            continue
+
+        out.append(make_record(current_dong, ho_text, use_num, r, 1, max_c))
+
+    return out
+
+
 def parser_yeondong(grid, filename):
     max_r, max_c = grid_dims(grid)
     head = ' '.join(norm_str(cell(grid, r, c)) for r in range(1, min(5, max_r) + 1) for c in range(1, min(5, max_c) + 1))
@@ -332,10 +396,13 @@ def parser_single_table(grid, filename):
     for r in range(1, max_r + 1):
         raw_d = cell(grid, r, d_col) if d_col else None
         if d_col and raw_d not in (None, ''):
-            sd = norm_str(raw_d)
-            if not any(k in sd for k in ['동계', '하계', '합계', '소계', 'EV', '난방', '온수', '기타', '구분', '호실']):
-                if re.sub(r'[^0-9]', '', sd) or '동' in sd:
-                    cur = sd
+            sd = norm_str(raw_d).strip()
+            # 동 열에 값이 있는데 숫자형 동 번호가 아니면 통계/요약 행으로 보고
+            # 이전 세대의 동 번호를 이어받지 않도록 해당 행 전체를 제외합니다.
+            dong_digits = re.sub(r'[^0-9]', '', sd)
+            if not dong_digits or any(k in sd.replace(' ', '') for k in ['동계', '하계', '합계', '소계', '총계', '평균', '통계', '난방', '온수', '구분', '호실']):
+                continue
+            cur = sd
         ho, use = cell(grid, r, h_col), cell(grid, r, u_col)
         if ho is None or use is None or not is_valid_ho(ho):
             continue
@@ -438,6 +505,7 @@ def parser_triplet(grid, filename):
 
 
 PARSERS = [
+    ('이도벨라시티프리미어 전용', parser_edobella),
     ('전월·당월·사용량 반복 블록', parser_triplet),
     ('연동드림아이', parser_yeondong),
     ('한일베라체', parser_hanil),
@@ -448,6 +516,19 @@ PARSERS = [
 
 
 def parse_grid(grid, filename):
+    # 이도벨라시티프리미어 파일은 전용 파서만 사용합니다.
+    # 전용 파서에서 헤더/데이터를 인식하지 못해도 일반 파서로 넘기지 않아
+    # '동계 10 10 0' 같은 통계 행이 세대로 오인되는 일을 막습니다.
+    compact_name = re.sub(r"\s+", "", str(filename))
+    if "이도벨라시티프리미어" in compact_name:
+        try:
+            recs = parser_edobella(grid, filename)
+        except Exception:
+            recs = []
+        if recs:
+            return '이도벨라시티프리미어 전용', finalize(recs, grid)
+        return None, pd.DataFrame()
+
     for name, fn in PARSERS:
         try:
             recs = fn(grid, filename)
