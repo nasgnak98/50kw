@@ -1,5 +1,8 @@
 import io
 import re
+import json
+import hashlib
+from pathlib import Path
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
@@ -12,6 +15,7 @@ from openpyxl.utils import get_column_letter
 st.set_page_config(page_title="전기사용량 미만 세대 추출기", layout="wide")
 st.title("⚡ 전기사용량 기준 미만 세대 자동 추출 시스템")
 st.markdown("다양한 아파트 전기 검침표 양식을 자동 인식합니다. 인식에 실패하면 열을 직접 선택할 수 있습니다.")
+st.caption("수동으로 설정한 열 정보는 양식별로 로컬 JSON 파일에 저장되며, 같은 구조의 다음 파일에서 재사용됩니다.")
 
 MAX_HO = 9999  # 이 값을 넘는 숫자는 지침(계기 숫자)으로 보고 호수에서 제외
 EXCLUDE_EXACT = {
@@ -548,6 +552,40 @@ def auto_parse_file(grids, filename):
     return None, None, pd.DataFrame()
 
 
+# ───────────────────────── 저장된 수동 설정 ─────────────────────────
+CONFIG_PATH = Path(__file__).with_name("전기사용량_수동설정_저장.json")
+
+
+def layout_fingerprint(sheet_name, grid):
+    """파일명/행 수에 의존하지 않고 시트명, 열 수, 상단 구조로 양식을 식별합니다."""
+    _, ncols = grid_dims(grid)
+    header = []
+    for row in grid[:4]:
+        header.append([norm_str(v) for v in row[:ncols]])
+    payload = json.dumps(
+        {"sheet": sheet_name, "ncols": ncols, "header": header},
+        ensure_ascii=False, sort_keys=True
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def load_saved_configs():
+    try:
+        with CONFIG_PATH.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_config_for_layout(sheet_name, grid, cfg):
+    configs = load_saved_configs()
+    key = layout_fingerprint(sheet_name, grid)
+    configs[key] = {"sheet": sheet_name, **cfg}
+    with CONFIG_PATH.open("w", encoding="utf-8") as f:
+        json.dump(configs, f, ensure_ascii=False, indent=2)
+
+
 # ───────────────────────── 수동 설정 ─────────────────────────
 def grid_to_preview(grid, max_rows=40):
     _, mc = grid_dims(grid)
@@ -627,6 +665,27 @@ if files:
             cfg = st.session_state.get(f"cfg_{fkey}")
             sheet = pname = None
 
+            # 저장된 설정이 현재 시트 구조와 일치하면 재사용합니다.
+            saved_configs = load_saved_configs()
+            saved_match = None
+            for candidate_sheet in order_sheets(grids):
+                fp = layout_fingerprint(candidate_sheet, grids[candidate_sheet])
+                if fp in saved_configs:
+                    candidate_cfg = saved_configs[fp]
+                    if candidate_cfg.get("sheet") == candidate_sheet:
+                        # 열 인덱스 범위를 확인해 구조가 맞지 않는 설정은 적용하지 않습니다.
+                        _, candidate_cols = grid_dims(grids[candidate_sheet])
+                        indexes = [candidate_cfg.get("ho"), candidate_cfg.get("use")]
+                        if candidate_cfg.get("dong") is not None:
+                            indexes.append(candidate_cfg.get("dong"))
+                        if all(isinstance(x, int) and 0 <= x < candidate_cols for x in indexes):
+                            saved_match = candidate_cfg
+                            break
+            if cfg is None and saved_match is not None:
+                cfg = saved_match
+                st.session_state[f"cfg_{fkey}"] = cfg
+                st.info("이전에 저장한 수동 열 설정을 불러왔습니다. 추출 결과를 확인해 주세요.")
+
             # 파일명에 의존하지 않고 모든 파일에 동일한 검증 원칙을 적용합니다.
             # 자동 파서가 행을 반환했다는 사실만으로 정상 인식이라고 간주하지 않습니다.
 
@@ -665,22 +724,37 @@ if files:
                     else:
                         st.success("자동 인식 결과를 확인했습니다.")
 
-                with st.expander(
-                    "🛠️ 열 직접 선택 / 수동으로 다시 분석",
-                    expanded=(auto_failed or (not st.session_state.get(f"confirm_auto_{fkey}", False)))
-                ):
-                    st.caption(
-                        "자동 인식이 실패했거나 후보 결과가 원본과 다르면 "
-                        "시트, 호수 열, 사용량 열, 동 열, 데이터 시작 행을 직접 지정하세요. "
-                        "자동 후보가 일부 행을 반환해도 정확성이 보장되는 것은 아닙니다."
-                    )
-                    new_cfg = manual_ui(
-                        fkey, grids, sheet or order_sheets(grids)[0],
-                        show_warning=False
-                    )
-                    if new_cfg:
-                        st.session_state[f"cfg_{fkey}"] = new_cfg
+                # 정상적인 자동 인식에서는 수동 설정 UI를 기본적으로 숨깁니다.
+                # 인식 실패 시에는 자동으로 열고, 사용자가 결과 오류를 발견했을 때만
+                # 버튼을 눌러 수동 설정 UI를 열 수 있게 합니다.
+                manual_requested = st.session_state.get(f"manual_requested_{fkey}", False)
+                if not auto_failed and not manual_requested:
+                    if st.button(
+                        "⚠️ 자동 인식 결과가 잘못되었나요? 수동 설정 열기",
+                        key=f"open_manual_{fkey}"
+                    ):
+                        st.session_state[f"manual_requested_{fkey}"] = True
                         st.rerun()
+
+                if auto_failed or manual_requested:
+                    with st.expander(
+                        "🛠️ 열 직접 선택 / 수동으로 다시 분석",
+                        expanded=True
+                    ):
+                        st.caption(
+                            "자동 인식이 실패했거나 후보 결과가 원본과 다를 때만 사용하세요. "
+                            "시트, 호수 열, 사용량 열, 동 열, 데이터 시작 행을 직접 지정할 수 있습니다."
+                        )
+                        new_cfg = manual_ui(
+                            fkey, grids, sheet or order_sheets(grids)[0],
+                            show_warning=False
+                        )
+                        if new_cfg:
+                            st.session_state[f"cfg_{fkey}"] = new_cfg
+                            save_config_for_layout(new_cfg["sheet"], grids[new_cfg["sheet"]], new_cfg)
+                            st.session_state[f"manual_requested_{fkey}"] = False
+                            st.success("수동 설정을 저장했습니다. 같은 양식의 다음 파일부터 자동으로 재사용합니다.")
+                            st.rerun()
 
             if df_all.empty:
                 st.error(
