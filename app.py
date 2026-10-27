@@ -681,7 +681,8 @@ if files:
                         if all(isinstance(x, int) and 0 <= x < candidate_cols for x in indexes):
                             saved_match = candidate_cfg
                             break
-            if cfg is None and saved_match is not None:
+            skip_saved_config = st.session_state.get(f"skip_saved_cfg_{fkey}", False)
+            if cfg is None and saved_match is not None and not skip_saved_config:
                 cfg = saved_match
                 st.session_state[f"cfg_{fkey}"] = cfg
                 st.info("이전에 저장한 수동 열 설정을 불러왔습니다. 추출 결과를 확인해 주세요.")
@@ -693,7 +694,11 @@ if files:
                 sheet, pname = cfg['sheet'], '수동 설정'
                 df_all = parse_with_config(grids[sheet], cfg)
                 if st.button("수동 설정 초기화", key=f"reset_{fkey}"):
-                    del st.session_state[f"cfg_{fkey}"]
+                    # 저장된 설정이 다시 자동 적용되지 않도록 이번 파일에서는 건너뛰고,
+                    # 수동 설정 화면을 바로 활성화합니다.
+                    st.session_state.pop(f"cfg_{fkey}", None)
+                    st.session_state[f"skip_saved_cfg_{fkey}"] = True
+                    st.session_state[f"manual_requested_{fkey}"] = True
                     st.rerun()
             else:
                 sheet, pname, df_all = auto_parse_file(grids, f.name)
