@@ -81,7 +81,10 @@ def load_grids(file_bytes):
         try:
             ns = {'ss': 'urn:schemas-microsoft-com:office:spreadsheet'}
             key = '{urn:schemas-microsoft-com:office:spreadsheet}'
-            root = ET.fromstring(file_bytes)
+            # 파일 끝의 널 바이트/쓰레기 제거 후 </Workbook>까지만 사용
+            end = file_bytes.rfind(b'</Workbook>')
+            clean = file_bytes[:end + len(b'</Workbook>')] if end != -1 else file_bytes.rstrip(b'\x00')
+            root = ET.fromstring(clean)
             grids = {}
             for ws in root.findall('.//ss:Worksheet', ns):
                 name = ws.attrib.get(key + 'Name', 'Sheet1')
