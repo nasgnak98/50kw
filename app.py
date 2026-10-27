@@ -67,10 +67,14 @@ def grid_dims(grid):
     return len(grid), max((len(r) for r in grid), default=0)
 
 
-def make_record(dong, ho, use):
-    return {'동': str(dong).replace('동', '').strip() if dong else '',
-            '구분/호수': norm_str(ho).replace('호', ''),
-            '사용량(kWh)': use}
+def make_record(dong, ho, use, row=None, c0=1, c1=None):
+    """row/c0/c1: 원본 시트의 행 번호와 열 범위(1-based) — 업체명/비고 추출에 사용"""
+    rec = {'동': str(dong).replace('동', '').strip() if dong else '',
+           '구분/호수': norm_str(ho).replace('호', ''),
+           '사용량(kWh)': use}
+    if row is not None:
+        rec.update({'_r': row, '_c0': c0, '_c1': c1 or 10 ** 6})
+    return rec
 
 
 # ───────────────────────── 파일 로딩 ─────────────────────────
@@ -159,16 +163,49 @@ def order_sheets(grids):
 
 
 # ───────────────────────── 결과 정리 ─────────────────────────
-def finalize(records):
+def extract_notes(df, grid):
+    """같은 행(블록)에 있는 문자 셀(업체명·비고 등)을 모아 '업체명/비고' 열로 만든다.
+    - 숫자/날짜/'-'/호수·동 표기는 제외
+    - 대부분의 행에 똑같이 반복되는 값(단지명 등)은 제외"""
+    texts = []
+    for _, rw in df.iterrows():
+        r = int(rw['_r'])
+        row = grid[r - 1] if 1 <= r <= len(grid) else []
+        skip = {norm_str(rw['동']), norm_str(rw['구분/호수'])}
+        found = []
+        for ci in range(int(rw['_c0']) - 1, min(len(row), int(rw['_c1']))):
+            v = row[ci]
+            if v is None or isinstance(v, (datetime, int, float)):
+                continue
+            t = norm_str(v)
+            if not t or t == '-' or clean_num(t) is not None:
+                continue
+            if t.replace('호', '').replace('동', '').strip() in skip:
+                continue
+            found.append(t)
+        texts.append(found)
+    n = len(texts)
+    cnt = {}
+    for lst in texts:
+        for t in set(lst):
+            cnt[t] = cnt.get(t, 0) + 1
+    common = {t for t, k in cnt.items() if n >= 5 and k / n >= 0.8}
+    return [' / '.join(t for t in lst if t not in common) for lst in texts]
+
+
+def finalize(records, grid=None):
     df = pd.DataFrame(records)
     if df.empty:
         return df
-    df = df.drop_duplicates().reset_index(drop=True)
+    df = df.drop_duplicates(subset=['동', '구분/호수', '사용량(kWh)']).reset_index(drop=True)
     df['_d'] = pd.to_numeric(df['동'].astype(str).str.extract(r'(\d+)')[0], errors='coerce').fillna(0)
     df['_h'] = pd.to_numeric(df['구분/호수'].astype(str).str.extract(r'(\d+)')[0], errors='coerce').fillna(0)
-    df = df.sort_values(['_d', '_h']).drop(columns=['_d', '_h']).reset_index(drop=True)
-    if not df['동'].astype(str).str.strip().ne('').any():
-        pass  # 동 정보가 없으면 빈 열로 둠
+    df = df.sort_values(['_d', '_h'], kind='stable').drop(columns=['_d', '_h']).reset_index(drop=True)
+    if grid is not None and '_r' in df.columns:
+        notes = extract_notes(df, grid)
+        if any(notes):
+            df['업체명/비고'] = notes
+    df = df.drop(columns=[c for c in ('_r', '_c0', '_c1') if c in df.columns])
     df.index = df.index + 1
     return df
 
@@ -185,7 +222,7 @@ def parser_yeondong(grid, filename):
         if ho is not None and use is not None and is_valid_ho(ho):
             u = clean_num(use)
             if u is not None:
-                out.append(make_record('', ho, u))
+                out.append(make_record('', ho, u, r))
     return out
 
 
@@ -202,7 +239,7 @@ def parser_hanil(grid, filename):
             continue
         u = clean_num(use)
         if u is not None:
-            out.append(make_record(norm_str(dong), ho, u))
+            out.append(make_record(norm_str(dong), ho, u, r))
     return out
 
 
@@ -218,7 +255,7 @@ def parser_hilton(grid, filename):
                     if ho is not None and use is not None and is_valid_ho(norm_str(ho).replace('호', '')):
                         u = clean_num(use)
                         if u is not None:
-                            out.append(make_record('', ho, u))
+                            out.append(make_record('', ho, u, r, c0, c0 + 3))
     return out
 
 
@@ -268,7 +305,7 @@ def parser_single_table(grid, filename):
         dong = cur.replace('동', '').strip() if d_col else ''
         if d_col and (not dong or any(k in dong for k in ['계', '난방', '온수'])):
             continue
-        out.append(make_record(dong, ho, u))
+        out.append(make_record(dong, ho, u, r))
     return out
 
 
@@ -317,7 +354,7 @@ def parser_auto(grid, filename):
                 if p is not None and cc is not None:
                     u = cc - p
             if u is not None:
-                out.append(make_record('', ho, u))
+                out.append(make_record('', ho, u, r, c0 + 1, c1))
     return out
 
 
@@ -356,7 +393,7 @@ def parser_triplet(grid, filename):
                 if p is not None and cc is not None:
                     u = cc - p
             if u is not None:
-                out.append(make_record('', ho, u))
+                out.append(make_record('', ho, u, r, ho_c, max(use_c or 0, cur_c or 0)))
     return out
 
 
@@ -377,7 +414,7 @@ def parse_grid(grid, filename):
         except Exception:
             recs = []
         if recs:
-            return name, finalize(recs)
+            return name, finalize(recs, grid)
     return None, pd.DataFrame()
 
 
@@ -404,7 +441,9 @@ def parse_with_config(grid, cfg):
     offsets = range(0, mc, cfg['step']) if cfg['step'] else [0]
     out, cur = [], ''
     for off in offsets:
-        for r in grid[cfg['start']:]:
+        for ridx in range(cfg['start'], len(grid)):
+            r = grid[ridx]
+
             def get(c):
                 if c is None:
                     return None
@@ -415,8 +454,9 @@ def parse_with_config(grid, cfg):
             ho, use = get(cfg['ho']), clean_num(get(cfg['use']))
             if ho is None or use is None or not is_valid_ho(ho):
                 continue
-            out.append(make_record(cur if cfg['dong'] is not None else '', ho, use))
-    return finalize(out)
+            out.append(make_record(cur if cfg['dong'] is not None else '', ho, use,
+                                   ridx + 1, off + 1, off + (cfg['step'] or 10 ** 6)))
+    return finalize(out, grid)
 
 
 def manual_ui(fkey, grids, default_sheet):
