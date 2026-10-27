@@ -54,6 +54,28 @@ def is_valid_ho(ho_str):
     n = int(digits)
     return 0 < n <= MAX_HO
 
+def is_summary_row(row_values):
+    """
+    통계 행, 제목 행, 구분 행 등을 세대 데이터에서 제외합니다.
+    """
+    EXCLUDE_KEYWORDS = {
+        '동계', '하계', '합계', '총계', '소계', '평균',
+        '통계', '전체합계', '세대합계', '합산',
+        '전월', '당월', '구분', '호실', '총사용량'
+    }
+
+    for value in row_values:
+        if value is None:
+            continue
+
+        text = str(value).strip().replace(' ', '')
+
+        # 셀 값이 통계 키워드와 정확히 일치하는 경우
+        if text in EXCLUDE_KEYWORDS:
+            return True
+
+    return False
+
 
 def cell(grid, r, c):
     """1-based 좌표로 안전하게 셀 읽기"""
