@@ -18,6 +18,7 @@ EXCLUDE_EXACT = {
     '합계', '소계', '합계', '전월', '당월', '구분', '호', '동', '청구월', 'None', '', '평균',
     '차액', 'NO', 'No', '시작지침', '종료지침', '동계', '하계', '난방', '온수', '총계', '계', '호실',
 }
+EMPTY_STOP = 200  # 연속 빈 행이 이만큼 나오면 시트 끝으로 간주
 HO_KEYS = ('구분', '호', '호수', '세대', '호실')
 
 
@@ -114,10 +115,26 @@ def load_grids(file_bytes):
             return grids
     except Exception:
         pass
-    # 3) xlsx
+    # 3) xlsx — read_only 스트리밍 + 빈 행 연속 시 조기 종료
+    #    (시트 범위가 A1:G1048576처럼 부풀려진 파일도 수 초 안에 읽음)
     try:
-        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
-        return {ws.title: [list(r) for r in ws.iter_rows(values_only=True)] for ws in wb.worksheets}
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+        grids = {}
+        for ws in wb.worksheets:
+            rows, empty_run = [], 0
+            for row in ws.iter_rows(values_only=True):
+                if any(v not in (None, '') and not (isinstance(v, str) and not v.strip()) for v in row):
+                    empty_run = 0
+                else:
+                    empty_run += 1
+                    if empty_run >= EMPTY_STOP:
+                        break
+                rows.append(list(row))
+            while rows and not any(v not in (None, '') for v in rows[-1]):
+                rows.pop()
+            grids[ws.title] = rows
+        wb.close()
+        return grids
     except Exception:
         return {}
 
@@ -212,15 +229,19 @@ def parser_single_table(grid, filename):
     for c in range(1, max_c + 1):
         seen = []
         for r in range(1, min(15, max_r) + 1):
-            s = norm_str(cell(grid, r, c))
-            if s and s not in seen:
+            v = cell(grid, r, c)
+            s = norm_str(v)
+            # 숫자/날짜 값은 헤더 글자가 아니므로 제외 (데이터가 헤더로 섞이는 것 방지)
+            if not s or isinstance(v, (datetime, int, float)) or clean_num(s) is not None:
+                continue
+            if s not in seen:
                 seen.append(s)
         headers[c] = ''.join(seen).replace(' ', '')
     dong_cols, ho_cols, use_cols = [], [], []
     for c, h in headers.items():
         if '동' in h and not any(k in h for k in ['동계', '하계', '부하', '사용량', '지역', '지침', '전월']):
             dong_cols.append(c)
-        if any(k in h for k in ['호실', '호수', '세대', '구분', '호(구분)']) and not any(k in h for k in ['사용량', '전월', '지침']):
+        if (h == '호' or h.endswith('호') and len(h) <= 4 or any(k in h for k in ['호실', '호수', '세대', '구분', '호(구분)'])) and not any(k in h for k in ['사용량', '전월', '지침']):
             ho_cols.append(c)
         if any(k in h for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량', '전기사용량']) \
                 and not any(k in h for k in ['전월사용', '전월지침', '시작지침']):
@@ -301,7 +322,46 @@ def parser_auto(grid, filename):
 
 
 # 순서대로 시도하여 결과가 나오는 첫 파서 사용 (기존 검증된 파서 우선, 범용 파서가 마지막 보루)
+def parser_triplet(grid, filename):
+    """[호(헤더 없어도 됨), 전월, 당월, 사용량] 이 가로로 몇 번 반복되는 양식.
+    헤더 행에서 '전월' 열을 모두 찾고, 바로 왼쪽 열을 호수, 오른쪽으로 당월/사용량 열을 잡는다."""
+    max_r, max_c = grid_dims(grid)
+    best = None
+    for r in range(1, min(15, max_r) + 1):
+        prevs = [c for c in range(1, max_c + 1) if norm_str(cell(grid, r, c)).replace(' ', '') == '전월']
+        if prevs and (best is None or len(prevs) > len(best[1])):
+            best = (r, prevs)
+    if not best:
+        return []
+    hr, prevs = best
+    out = []
+    for c in prevs:
+        ho_c = c - 1
+        cur_c, use_c = None, None
+        for k in range(c + 1, min(c + 4, max_c + 1)):
+            h = norm_str(cell(grid, hr, k)).replace(' ', '')
+            if h == '당월' and cur_c is None:
+                cur_c = k
+            elif '사용량' in h and use_c is None:
+                use_c = k
+        if ho_c < 1 or (use_c is None and cur_c is None):
+            continue
+        for r in range(hr + 1, max_r + 1):
+            ho = cell(grid, r, ho_c)
+            if ho is None or not is_valid_ho(norm_str(ho).replace('호', '')):
+                continue
+            u = clean_num(cell(grid, r, use_c)) if use_c else None
+            if u is None and cur_c:
+                p, cc = clean_num(cell(grid, r, c)), clean_num(cell(grid, r, cur_c))
+                if p is not None and cc is not None:
+                    u = cc - p
+            if u is not None:
+                out.append(make_record('', ho, u))
+    return out
+
+
 PARSERS = [
+    ('전월·당월·사용량 반복 블록', parser_triplet),
     ('연동드림아이', parser_yeondong),
     ('한일베라체', parser_hanil),
     ('가로 반복 블록', parser_hilton),
