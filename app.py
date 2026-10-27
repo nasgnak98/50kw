@@ -24,25 +24,54 @@ def clean_num(val):
     return None
 
 def is_valid_ho(ho_str):
+    """세대 호수로 볼 수 있는 값인지 보수적으로 검증합니다."""
     if ho_str is None:
         return False
-    s = str(ho_str).strip().replace('.0', '')
-    
-    # 명확하게 호수가 아닌 키워드만 정확히 일치할 때 제외
-    EXCLUDE_EXACT = {'합계', '소계', '합  계', '전월', '당월', '구분', '호', '동', '청구월', 'None', '', '평균', '차액', 'NO', '시작지침', '종료지침', '동계', '하계', '난방', '온수', '총계', '계', '호실'}
-    if s in EXCLUDE_EXACT:
+
+    s = str(ho_str).strip()
+    if re.fullmatch(r"\d+\.0", s):
+        s = s[:-2]
+    s = s.replace("호", "").strip()
+
+    exclude_exact = {
+        "", "None", "nan", "합계", "총계", "소계", "평균", "통계",
+        "전월", "당월", "구분", "호", "동", "청구월", "차액", "NO",
+        "시작지침", "종료지침", "동계", "하계", "난방", "온수", "계", "호실"
+    }
+    if s in exclude_exact:
         return False
-    
-    clean_digits = re.sub(r'[^0-9]', '', s)
-    if not clean_digits:
+
+    # 숫자로만 된 호수만 허용합니다. 숫자가 섞인 통계/지침 텍스트를 호수로 오인하지 않습니다.
+    if not re.fullmatch(r"\d+", s):
         return False
-    
-    val_num = int(clean_digits)
-    # 5000 초과 값은 지침(계기 숫자)이므로 호수에서 제외
-    if val_num > 5000 or val_num == 0:
-        return False
-        
-    return True
+
+    value = int(s)
+    return 0 < value <= 5000
+
+
+def is_summary_row(row_values):
+    """행 전체를 확인해 통계/합계/설명 행을 제외합니다."""
+    exclude_keywords = (
+        "합계", "총계", "소계", "평균", "통계", "동계", "하계",
+        "난방", "온수", "전체합계", "세대합계", "페이지", "총사용량"
+    )
+    for value in row_values:
+        if value is None:
+            continue
+        text = re.sub(r"\s+", "", str(value)).strip()
+        if any(keyword in text for keyword in exclude_keywords):
+            return True
+    return False
+
+
+def normalize_identifier(value):
+    """엑셀 숫자 셀의 1.0을 1로 정규화합니다."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if re.fullmatch(r"[-+]?\d+\.0", text):
+        return text[:-2]
+    return text.replace("동", "").replace("호", "").strip()
 
 @st.cache_data(show_spinner=False)
 def load_any_excel_to_openpyxl(file_bytes, filename):
@@ -168,6 +197,9 @@ def parse_excel_universal_sorted(file_bytes, filename):
 
     if is_yeonmok_format or ('검침표' in filename or '연동드림아이' in filename):
         for r in range(1, max_r + 1):
+            row_values = [ws.cell(r, c).value for c in range(1, max_c + 1)]
+            if is_summary_row(row_values):
+                continue
             ho_val = ws.cell(r, 1).value
             use_val = ws.cell(r, 4).value
             if ho_val is not None and use_val is not None:
@@ -189,6 +221,9 @@ def parse_excel_universal_sorted(file_bytes, filename):
     # ==========================================
     if '한일베라체' in filename or '한일' in filename:
         for r in range(5, max_r + 1):
+            row_values = [ws.cell(r, c).value for c in range(1, max_c + 1)]
+            if is_summary_row(row_values):
+                continue
             dong_val = ws.cell(r, 2).value
             ho_val = ws.cell(r, 3).value
             use_val = ws.cell(r, 7).value
@@ -219,6 +254,9 @@ def parse_excel_universal_sorted(file_bytes, filename):
             if val is not None and str(val).strip() == '구분':
                 # 데이터는 헤더 행 바로 다음 또는 다다음 행부터 시작
                 for r in range(header_row + 1, max_r + 1):
+                    row_values = [ws.cell(r, c).value for c in range(1, max_c + 1)]
+                    if is_summary_row(row_values):
+                        continue
                     ho_cell = ws.cell(row=r, column=c_start).value
                     use_cell = ws.cell(row=r, column=c_start + 3).value # 4번째 열이 사용량
                     if ho_cell is not None and use_cell is not None:
@@ -236,67 +274,85 @@ def parse_excel_universal_sorted(file_bytes, filename):
         return finalize_dataframe(pd.DataFrame(sheet_records))
 
     # ==========================================
-    # [4] 일반적인 단일 표 구조 파서
+    # [4] 일반 단일 표 파서: 실제 헤더 행을 찾아 열을 명시적으로 매핑
     # ==========================================
-    header_texts = {}
-    for c in range(1, max_c + 1):
-        col_text_list = []
-        for r in range(1, min(15, max_r + 1)):
-            val = ws.cell(r, c).value
-            if val is not None:
-                s_val = str(val).strip()
-                if s_val and s_val not in col_text_list:
-                    col_text_list.append(s_val)
-        header_texts[c] = " ".join(col_text_list)
+    # 열 전체의 텍스트를 합쳐 추정하지 않고, 한 행에 있는 헤더명을 기준으로 탐색합니다.
+    header_candidates = []
+    for r in range(1, min(30, max_r) + 1):
+        values = [ws.cell(r, c).value for c in range(1, max_c + 1)]
+        texts = [re.sub(r"\s+", "", str(v)).lower() if v is not None else "" for v in values]
 
-    dong_cols, ho_cols, use_cols = [], [], []
-    for c, h_text in header_texts.items():
-        h_clean = h_text.replace(" ", "")
-        if '동' in h_clean and not any(k in h_clean for k in ['동계', '하계', '부하', '사용량', '지역', '지침', '전월']):
-            dong_cols.append(c)
-        if any(k in h_clean for k in ['호실', '호수', '세대', '구분', '호(구분)']) and not any(k in h_clean for k in ['사용량', '전월', '지침']):
-            ho_cols.append(c)
-        if any(k in h_clean for k in ['사용량', '금월사용', '계기사용량', '검침합계', '당월계', '부하사용량', '합계사용량', '전기사용량']) and not any(k in h_clean for k in ['전월사용', '전월지침', '시작지침']):
-            use_cols.append(c)
+        dong_idx = next((i for i, t in enumerate(texts) if t in {"동", "동번호", "동명"}), None)
+        ho_idx = next((i for i, t in enumerate(texts) if t in {"호", "호수", "호실", "세대", "세대번호", "구분/호수", "호(구분)"}), None)
+        use_idx = next((i for i, t in enumerate(texts) if any(k in t for k in (
+            "사용량", "금월사용", "계기사용량", "검침합계", "당월계", "부하사용량", "합계사용량", "전기사용량"
+        )) and not any(k in t for k in ("전월사용", "전월지침", "시작지침", "종료지침"))), None)
 
-    has_dong_col = len(dong_cols) > 0
-    d_col = dong_cols[0] if has_dong_col else None
-    h_col = ho_cols[0] if ho_cols else (2 if has_dong_col else 1)
-    u_col = use_cols[0] if use_cols else max_c
+        # 호수와 사용량 헤더가 같은 행에서 확인되어야 신뢰할 수 있는 표 헤더로 인정합니다.
+        if ho_idx is not None and use_idx is not None:
+            header_candidates.append((r, dong_idx, ho_idx, use_idx))
+
+    if not header_candidates:
+        # 헤더를 확실히 찾지 못하면 임의로 마지막 열을 사용하지 않습니다.
+        return finalize_dataframe(pd.DataFrame(columns=["동", "구분/호수", "사용량(kWh)"]))
+
+    # 가장 위쪽의 유효한 헤더를 사용합니다.
+    header_row, dong_idx, ho_idx, use_idx = header_candidates[0]
+    d_col = dong_idx + 1 if dong_idx is not None else None
+    h_col = ho_idx + 1
+    u_col = use_idx + 1
+    has_dong_col = d_col is not None
 
     current_dong = ""
-    for r in range(1, max_r + 1):
-        raw_dong = ws.cell(r, d_col).value if (has_dong_col and d_col) else None
-        raw_ho = ws.cell(r, h_col).value if h_col else None
-        raw_use = ws.cell(r, u_col).value if u_col else None
+    for r in range(header_row + 1, max_r + 1):
+        row_values = [ws.cell(r, c).value for c in range(1, max_c + 1)]
 
-        if has_dong_col and d_col and raw_dong is not None and str(raw_dong).strip() != '':
-            str_d = str(raw_dong).strip()
-            if not any(k in str_d for k in ['동계', '하계', '합계', '소계', 'EV', '난방', '온수', '기타', '동', '구분', '호실']):
-                clean_d_num = re.sub(r'[^0-9]', '', str_d)
-                if clean_d_num != '' or '동' in str_d:
-                    current_dong = str_d
-            elif '동' in str_d:
-                current_dong = str_d
+        # 표 아래쪽의 합계/통계/페이지 표기 등은 행 전체를 검사해 제외합니다.
+        if is_summary_row(row_values):
+            continue
 
-        if raw_ho is not None and raw_use is not None:
-            str_ho = str(raw_ho).strip()
-            if not is_valid_ho(str_ho):
+        raw_dong = ws.cell(r, d_col).value if d_col else None
+        raw_ho = ws.cell(r, h_col).value
+        raw_use = ws.cell(r, u_col).value
+
+        if raw_ho is None or raw_use is None:
+            continue
+
+        str_ho = normalize_identifier(raw_ho)
+        if not is_valid_ho(str_ho):
+            continue
+
+        use_num = clean_num(raw_use)
+        if use_num is None or use_num < 0:
+            continue
+
+        # 동 값이 있는 행에서만 현재 동을 갱신합니다. '동계' 같은 문자는 행 검사에서 제외됩니다.
+        if has_dong_col and raw_dong is not None and str(raw_dong).strip() != "":
+            dong_text = normalize_identifier(raw_dong)
+            if re.fullmatch(r"\d+", dong_text):
+                current_dong = dong_text
+            else:
+                # 숫자 동 번호가 아닌 텍스트를 만나면 이전 동 번호를 이어 쓰지 않습니다.
+                current_dong = ""
                 continue
 
-            use_num = clean_num(raw_use)
-            if use_num is not None:
-                target_dong = str(current_dong).replace('동', '').strip() if has_dong_col else ''
-                if has_dong_col and (not target_dong or any(k in target_dong for k in ['계', '동계', '하계', '난방', '온수'])):
-                    continue
+        target_dong = current_dong if has_dong_col else ""
+        if has_dong_col and not target_dong:
+            continue
 
-                sheet_records.append({
-                    '동': target_dong,
-                    '구분/호수': str_ho,
-                    '사용량(kWh)': use_num
-                })
+        sheet_records.append({
+            "동": target_dong,
+            "구분/호수": str_ho,
+            "사용량(kWh)": use_num
+        })
 
-    return finalize_dataframe(pd.DataFrame(sheet_records))
+    # 동일 동/호가 중복 추출되면 첫 결과만 남기되, 다른 사용량이 있는 중복은 UI에서 확인할 수 있게 처리합니다.
+    if sheet_records:
+        parsed = pd.DataFrame(sheet_records)
+        parsed = parsed.drop_duplicates(subset=["동", "구분/호수"], keep="first")
+        return finalize_dataframe(parsed)
+
+    return finalize_dataframe(pd.DataFrame(columns=["동", "구분/호수", "사용량(kWh)"]))
 
 uploaded_files = st.file_uploader("엑셀 파일(.xlsx, .xls)들을 선택하세요 (다중 선택 가능)", type=["xlsx", "xls"], accept_multiple_files=True)
 
@@ -355,4 +411,4 @@ if uploaded_files:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             else:
-                st.success("해당 파일에는 50 미만 세대가 없습니다.")
+                st.info("50kWh 미만 세대가 없거나, 검침표의 헤더/열 구조를 자동으로 확인하지 못했습니다. 원본 시트의 동·호수·사용량 헤더를 확인해 주세요.")
