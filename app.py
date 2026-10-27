@@ -698,63 +698,22 @@ if files:
             else:
                 sheet, pname, df_all = auto_parse_file(grids, f.name)
 
-                # 자동 인식은 후보 결과일 뿐입니다. 사용자가 원본과 대조해 확인하기 전에는
-                # 최종 추출 결과나 기준 미만 세대 목록으로 표시하지 않습니다.
+                # 자동 인식 결과를 먼저 보여줍니다. 결과를 확인한 뒤 이상이 있을 때
+                # 사용자가 수동 설정 화면을 열 수 있도록 합니다.
                 auto_failed = df_all.empty
                 if auto_failed:
                     st.warning(
                         "자동 인식으로 유효한 세대 데이터를 찾지 못했습니다. "
-                        "자동 결과를 만들지 않았습니다. 아래에서 시트와 열을 직접 지정해 주세요."
+                        "아래에서 시트와 열을 직접 지정해 주세요."
                     )
+                    manual_requested = True
                 else:
-                    st.warning(
-                        "자동 인식 결과는 아직 검증되지 않았습니다. "
-                        "원본 엑셀의 호수와 사용량이 일치하는지 확인하기 전에는 최종 결과로 확정하지 않습니다."
+                    st.success(
+                        f"자동 인식 완료: 후보 {len(df_all)}개 행을 추출했습니다. "
+                        "아래 결과와 원본 엑셀의 호수·사용량을 비교해 주세요."
                     )
-                    st.caption(f"자동 인식 후보: 시트 `{sheet}`, 파서 `{pname}`, 후보 행 {len(df_all)}개")
-                    with st.expander("자동 인식 후보 미리보기 (확정 전)", expanded=True):
-                        st.dataframe(pd.concat([df_all.head(5), df_all.tail(5)]), use_container_width=True)
-                    confirmed = st.checkbox(
-                        "미리보기의 호수와 사용량이 원본 엑셀과 일치하는 것을 확인했습니다.",
-                        key=f"confirm_auto_{fkey}"
-                    )
-                    if not confirmed:
-                        # 자동 후보를 최종 결과처럼 표시하지 않고 수동 설정으로 안내합니다.
-                        df_all = pd.DataFrame()
-                    else:
-                        st.success("자동 인식 결과를 확인했습니다.")
-
-                # 정상적인 자동 인식에서는 수동 설정 UI를 기본적으로 숨깁니다.
-                # 인식 실패 시에는 자동으로 열고, 사용자가 결과 오류를 발견했을 때만
-                # 버튼을 눌러 수동 설정 UI를 열 수 있게 합니다.
-                manual_requested = st.session_state.get(f"manual_requested_{fkey}", False)
-                if not auto_failed and not manual_requested:
-                    if st.button(
-                        "⚠️ 자동 인식 결과가 잘못되었나요? 수동 설정 열기",
-                        key=f"open_manual_{fkey}"
-                    ):
-                        st.session_state[f"manual_requested_{fkey}"] = True
-                        st.rerun()
-
-                if auto_failed or manual_requested:
-                    with st.expander(
-                        "🛠️ 열 직접 선택 / 수동으로 다시 분석",
-                        expanded=True
-                    ):
-                        st.caption(
-                            "자동 인식이 실패했거나 후보 결과가 원본과 다를 때만 사용하세요. "
-                            "시트, 호수 열, 사용량 열, 동 열, 데이터 시작 행을 직접 지정할 수 있습니다."
-                        )
-                        new_cfg = manual_ui(
-                            fkey, grids, sheet or order_sheets(grids)[0],
-                            show_warning=False
-                        )
-                        if new_cfg:
-                            st.session_state[f"cfg_{fkey}"] = new_cfg
-                            save_config_for_layout(new_cfg["sheet"], grids[new_cfg["sheet"]], new_cfg)
-                            st.session_state[f"manual_requested_{fkey}"] = False
-                            st.success("수동 설정을 저장했습니다. 같은 양식의 다음 파일부터 자동으로 재사용합니다.")
-                            st.rerun()
+                    st.caption(f"자동 인식 시트: `{sheet}` | 인식 방식: `{pname}`")
+                    manual_requested = st.session_state.get(f"manual_requested_{fkey}", False)
 
             if df_all.empty:
                 st.error(
@@ -776,6 +735,32 @@ if files:
             with st.expander("인식 결과 검증 (전체 세대 앞/뒤 5건)"):
                 st.dataframe(pd.concat([df_all.head(5), df_all.tail(5)]), use_container_width=True)
                 st.caption("호수·사용량이 실제 엑셀과 맞는지 확인하세요. 결과가 틀리면 위의 '열 직접 선택 / 수동으로 다시 분석'을 이용하세요.")
+
+            # 결과를 확인한 다음에만 수동 설정을 열 수 있도록 결과 아래에 배치합니다.
+            if not cfg and not auto_failed and not manual_requested:
+                if st.button(
+                    "⚠️ 결과가 이상함 — 수동 설정으로 다시 분석",
+                    key=f"open_manual_{fkey}"
+                ):
+                    st.session_state[f"manual_requested_{fkey}"] = True
+                    st.rerun()
+
+            if not cfg and (auto_failed or manual_requested):
+                with st.expander("🛠️ 수동 설정으로 다시 분석", expanded=True):
+                    st.caption(
+                        "시트, 호수 열, 사용량 열, 동 열, 데이터 시작 행을 직접 지정할 수 있습니다. "
+                        "저장하면 같은 양식의 다음 파일에서 설정을 재사용합니다."
+                    )
+                    new_cfg = manual_ui(
+                        fkey, grids, sheet or order_sheets(grids)[0],
+                        show_warning=False
+                    )
+                    if new_cfg:
+                        st.session_state[f"cfg_{fkey}"] = new_cfg
+                        save_config_for_layout(new_cfg["sheet"], grids[new_cfg["sheet"]], new_cfg)
+                        st.session_state[f"manual_requested_{fkey}"] = False
+                        st.success("수동 설정을 저장했습니다. 같은 양식의 다음 파일부터 자동으로 재사용합니다.")
+                        st.rerun()
 
             if df_under.empty:
                 st.success("기준 미만 세대가 없습니다.")
